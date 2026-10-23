@@ -64,6 +64,9 @@ export function makeBlueprint(entities, label, iconNames, data) {
         if (e.direction) {
             entity.direction = e.direction
         }
+        if (e.recipe) {
+            entity.recipe = e.recipe
+        }
         return entity
     })
     return {
@@ -78,7 +81,7 @@ export function makeBlueprint(entities, label, iconNames, data) {
 
 const ARROW = {[NORTH]: "^", [EAST]: ">", [SOUTH]: "v", [WEST]: "<"}
 
-// One character per tile: F furnace, P pole, v for belts, and ) or ( for
+// One character per tile: F furnace, A assembling machine, P pole, v for belts, and ) or ( for
 // inserters, pointing where they drop items.
 export function previewLayout(entities, data) {
     let width = Math.max(...entities.map(e => e.x + e.w))
@@ -89,7 +92,7 @@ export function previewLayout(entities, data) {
     }
     for (let e of entities) {
         let type = entityInfo(data, e.name).type
-        let ch = {furnace: "F", "electric-pole": "P"}[type]
+        let ch = {furnace: "F", "assembling-machine": "A", "electric-pole": "P"}[type]
         if (type === "transport-belt") {
             ch = ARROW[e.direction]
         } else if (type === "inserter") {

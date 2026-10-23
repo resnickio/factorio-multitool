@@ -16,7 +16,7 @@ import path from "node:path"
 import { spawn } from "node:child_process"
 import { fileURLToPath } from "node:url"
 import { defaultParams } from "../blueprint/dsl.js"
-import { SAMPLES } from "./samples.mjs"
+import { SAMPLES, DEFAULT_MACHINE } from "./samples.mjs"
 
 const args = {}
 for (let i = 2; i < process.argv.length; i += 2) {
@@ -36,7 +36,11 @@ if (!sample) {
     throw new Error("unknown sample " + SAMPLE)
 }
 const data = JSON.parse(fs.readFileSync(path.join(here, "../data/space-age-2.1.23.json"), "utf8"))
-const params = {...defaultParams({recipe: sample.recipe, rate: sample.rate}, "electric-furnace", data), ...sample.override}
+const machine = sample.machine || DEFAULT_MACHINE
+const params = {...defaultParams({recipe: sample.recipe, rate: sample.rate}, machine, data), ...sample.override}
+const recipe = data.recipes.find(r => r.key === sample.recipe)
+const inputs = recipe.ingredients.map(i => i.name)
+const outputItem = recipe.results[0].name
 const blueprint = fs.readFileSync(path.join(here, "samples", SAMPLE + ".txt"), "utf8").trim()
 
 // Lay out the data directory.
@@ -66,10 +70,11 @@ fs.writeFileSync(path.join(WORK, "map-gen-settings.json"), JSON.stringify({
 
 const lua = `
 local BLUEPRINT = "${blueprint}"
-local INPUT_ITEM = "${sample.input}"
-local OUTPUT_ITEM = "${sample.output}"
+-- Each ingredient rides its own lane of the input belt; a single one uses both.
+local INPUTS = {${inputs.map(i => '"' + i + '"').join(", ")}}
+local OUTPUT_ITEM = "${outputItem}"
 local COLUMNS = ${params.columns}
-local FURNACE_SIZE = ${data.blueprint_entities[params.furnace].width}
+local FURNACE_SIZE = ${data.blueprint_entities[params.machine].width}
 local SECONDS = ${SECONDS}
 local WARMUP = ${WARMUP} * 60
 local report = {}
@@ -168,7 +173,7 @@ end
 local function status_report(label)
   local surface, area = state.surface, state.area
   local counts = {}
-  for _, e in pairs(surface.find_entities_filtered{type = {"furnace", "inserter"}, area = area}) do
+  for _, e in pairs(surface.find_entities_filtered{type = {"furnace", "assembling-machine", "inserter"}, area = area}) do
     local key = e.name .. " " .. status_name(e.status)
     counts[key] = (counts[key] or 0) + 1
   end
@@ -201,9 +206,10 @@ script.on_event(defines.events.on_tick, function(event)
     if belt then
       for line = 1, 2 do
         local l = belt.get_transport_line(line)
+        local item = INPUTS[line] or INPUTS[1]
         for i = 1, 2 do
           if l.can_insert_at_back() then
-            l.insert_at_back({name = INPUT_ITEM, count = 1})
+            l.insert_at_back({name = item, count = 1})
             fed = fed + 1
           end
         end

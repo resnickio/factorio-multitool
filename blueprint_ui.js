@@ -1,12 +1,12 @@
 import { spec } from "./factory.js"
 import { encodeBlueprint } from "./blueprint/codec.js"
-import { defaultParams, buildSmeltingBlueprint } from "./blueprint/dsl.js"
+import { defaultParams, buildColumnBlueprint, ineligibleReason } from "./blueprint/dsl.js"
 import { previewLayout } from "./blueprint/build.js"
 import { askForLayout } from "./blueprint/llm.js"
-import { lookupRecipe } from "./blueprint/entities.js"
+import { entityInfo, lookupRecipe, machineCrafts } from "./blueprint/entities.js"
 
-// The Blueprint tab: turns the smelting in the current solution into a
-// blueprint string for the game.
+// The Blueprint tab: turns the furnace and assembler rows in the current
+// solution into blueprint strings for the game.
 
 const DEFAULT_MODEL = "claude-sonnet-5-5"
 
@@ -22,33 +22,41 @@ function deflate(bytes) {
     return pako.deflate(bytes, {level: 9})
 }
 
-// Smelting recipes in the current solution, with what a column must deliver.
-function smeltingRequirements() {
+// Crafting recipes in the current solution, with what a column must deliver
+// and, if a column cannot be built for it, why not.
+function columnRequirements() {
     let result = []
     let data = spec.data
     if (!data || !data.blueprint_entities || !spec.lastTotals) {
         return result
     }
+    let dataRecipes = new Set(data.recipes.map(r => r.key))
     for (let [recipe, rate] of spec.lastTotals.rates) {
-        if (!recipe.categories || !recipe.categories.includes("smelting")) {
+        if (!dataRecipes.has(recipe.key)) {
             continue
         }
         let building = spec.getBuilding(recipe)
         if (building === null) {
             continue
         }
-        let info = data.blueprint_entities[building.key]
         let outItem = recipe.products[0].item
+        let reason = ineligibleReason(data, recipe.key, building.key)
         result.push({
             recipe,
             building,
-            electric: info !== undefined && info.type === "furnace",
-            item: outItem,
+            reason,
             // Items per second the solution needs from this recipe.
             rate: rate.mul(recipe.gives(outItem)).toFloat(),
         })
     }
     return result
+}
+
+// How many machines the solution calls for, without modules.
+function machinesNeeded(req) {
+    let recipe = lookupRecipe(spec.data, req.recipe.key)
+    let per = machineCrafts(entityInfo(spec.data, req.building.key), recipe) * recipe.results[0].amount
+    return Math.ceil(req.rate / per - 1e-9)
 }
 
 function copyText(text) {
@@ -62,16 +70,16 @@ async function generate(req) {
     output = {pending: true}
     renderBlueprint()
     let requirement = {recipe: req.recipe.key, rate: req.rate}
-    let furnace = req.building.key
+    let machine = req.building.key
     try {
         if (useModel) {
             if (apiKey === "") {
                 throw new Error("Enter an API key, or choose to build without Claude.")
             }
-            output = await askForLayout({apiKey, model, requirement, furnace, data: spec.data})
+            output = await askForLayout({apiKey, model, requirement, machine, data: spec.data})
         } else {
-            let params = defaultParams(requirement, furnace, spec.data)
-            output = {...buildSmeltingBlueprint(params, requirement, spec.data), params, attempts: 0, log: []}
+            let params = defaultParams(requirement, machine, spec.data)
+            output = {...buildColumnBlueprint(params, requirement, spec.data), params, attempts: 0, log: []}
         }
     } catch (e) {
         output = {failed: e.message}
@@ -105,7 +113,7 @@ function renderResult(root) {
         let p = output.params
         let attempts = output.attempts > 0 ? ` (accepted after ${output.attempts} ${output.attempts === 1 ? "attempt" : "attempts"})` : ""
         box.append("div")
-            .text(`${p.furnaces} × ${p.furnace}, ${p.columns} ${p.columns === 1 ? "column" : "columns"}; input ${p.inputBelt} with ${p.inputInserter}; output ${p.outputBelt} with ${p.outputInserter}; ${p.pole}${output.ok ? attempts : ""}`)
+            .text(`${p.machines} × ${p.machine}, ${p.columns} ${p.columns === 1 ? "column" : "columns"}; input ${p.inputBelt} with ${p.inputInserters} ${p.inputInserter}; output ${p.outputBelt} with ${p.outputInserters} ${p.outputInserter}; ${p.pole}${output.ok ? attempts : ""}`)
         if (p.notes) {
             box.append("div")
                 .classed("hint", true)
@@ -134,13 +142,19 @@ function renderResult(root) {
     let s = output.stats
     box.append("div")
         .classed("hint", true)
-        .text(`Makes ${s.produced.toFixed(2)}/s of the ${s.needed.toFixed(2)}/s needed. Input belt ${s.inputBeltLoad.toFixed(1)}/${s.inputBeltCapacity}/s, output belt ${s.outputBeltLoad.toFixed(1)}/${s.outputBeltCapacity}/s. Modules and fuel are not included.`)
+        .text(`Makes ${s.produced.toFixed(2)}/s of the ${s.needed.toFixed(2)}/s needed. Input belt ${s.inputBeltLoad.toFixed(1)}/${s.inputBeltCapacity}/s, output belt ${s.outputBeltLoad.toFixed(1)}/${s.outputBeltCapacity}/s. Modules are not included.`)
+    if (selected && selected.ingredients.length === 2) {
+        let [a, b] = selected.ingredients
+        box.append("div")
+            .classed("hint", true)
+            .text(`Feed ${a.item.name} on one lane of the input belt and ${b.item.name} on the other.`)
+    }
     box.append("pre")
         .classed("blueprint-preview", true)
         .text(output.preview)
     box.append("div")
         .classed("hint", true)
-        .text("Belts flow down (v); ) and ( are inserters, F furnaces, P poles.")
+        .text("Belts flow down (v); ) and ( are inserters, F furnaces, A assemblers, P poles.")
     box.append("textarea")
         .classed("blueprint-text", true)
         .attr("readonly", true)
@@ -180,14 +194,14 @@ export function renderBlueprint() {
             .text("Blueprints are not available for this data set. Choose Space Age 2.1.23.")
         return
     }
-    let reqs = smeltingRequirements()
+    let reqs = columnRequirements()
     if (reqs.length === 0) {
         root.append("p")
-            .text("There is no smelting in the current factory. Add a target such as iron plate on the Factory tab.")
+            .text("There are no furnaces or assemblers in the current factory. Add a target such as iron plate on the Factory tab.")
         return
     }
     root.append("p")
-        .text("Smelting columns for the current factory. Pick one to turn into a blueprint.")
+        .text("Machine columns for the current factory. Pick one to turn into a blueprint: a row of machines between an input belt and an output belt.")
 
     let table = root.append("table")
         .classed("blueprint-list", true)
@@ -198,20 +212,17 @@ export function renderBlueprint() {
             .append(() => req.recipe.icon.make(32))
         row.append("td")
             .text(req.recipe.name)
-        let furnaces = null
-        let note = ""
-        if (!req.electric) {
-            note = `${req.building.name} burns fuel; choose electric furnaces under Settings to make a blueprint.`
+        let note
+        if (req.reason) {
+            note = req.reason
         } else {
-            let recipe = lookupRecipe(spec.data, req.recipe.key)
-            let per = spec.data.blueprint_entities[req.building.key].crafting_speed / recipe.energy_required * recipe.results[0].amount
-            furnaces = Math.ceil(req.rate / per - 1e-9)
-            note = `${req.rate.toFixed(2)}/s needs ${furnaces} × ${req.building.name}`
+            note = `${req.rate.toFixed(2)}/s needs ${machinesNeeded(req)} × ${req.building.name}`
         }
         row.append("td")
+            .classed("hint", !!req.reason)
             .text(note)
         let cell = row.append("td")
-        if (req.electric) {
+        if (!req.reason) {
             cell.append("button")
                 .text("Choose")
                 .on("click", () => {
@@ -222,7 +233,7 @@ export function renderBlueprint() {
         }
     }
 
-    let req = reqs.find(r => r.recipe === selected && r.electric)
+    let req = reqs.find(r => r.recipe === selected && !r.reason)
     if (!req) {
         return
     }

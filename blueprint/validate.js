@@ -1,40 +1,79 @@
 // Checks a layout, independently of how it was produced.
 
 import {
-    entityInfo, beltThroughput, inserterThroughput, furnaceCrafts, lookupRecipe,
-    ALLOWED_INSERTERS, ALLOWED_POLES, NORTH, EAST, SOUTH, WEST,
+    entityInfo, beltThroughput, inserterThroughput, machineCrafts, lookupRecipe,
+    isMachineType, solidItems, ALLOWED_INSERTERS, ALLOWED_POLES, NORTH, EAST, SOUTH, WEST,
 } from "./entities.js"
 
+// Which way an inserter's direction points: at the tile it picks up from.
 const STEP = {[NORTH]: [0, -1], [EAST]: [1, 0], [SOUTH]: [0, 1], [WEST]: [-1, 0]}
+
+// Why a recipe cannot be built in a column by the given machine, or null.
+export function ineligibleReason(data, recipeKey, machineName) {
+    let info = data.blueprint_entities[machineName]
+    if (!info || !isMachineType(info.type)) {
+        return `${machineName} is not an electric crafting machine`
+    }
+    if (info.width !== info.height) {
+        return `${machineName} is not square`
+    }
+    let recipe = data.recipes.find(r => r.key === recipeKey)
+    if (!recipe) {
+        return `unknown recipe ${recipeKey}`
+    }
+    let name = recipe.localized_name.en
+    if (!recipe.categories.some(c => info.crafting_categories.includes(c))) {
+        return `${machineName} cannot craft ${name}`
+    }
+    let solids = solidItems(data)
+    for (let i of [...recipe.ingredients, ...recipe.results]) {
+        if (!solids.has(i.name)) {
+            return `${name} uses a fluid, which needs pipes`
+        }
+    }
+    if (recipe.ingredients.length > 2) {
+        return `${name} has ${recipe.ingredients.length} ingredients; a column can feed two on one belt`
+    }
+    if (recipe.ingredients.length === 0) {
+        return `${name} has no ingredients`
+    }
+    return null
+}
 
 // Checks the parameters of a layout request against the requirements, before
 // anything is placed.
 //
-// requirement: {recipe, rate}, where rate is the output items/second needed.
+// requirement: {recipe, rate}, where rate is the output items/second needed
+// of the recipe's first product.
 export function validateParams(params, requirement, data) {
     let errors = []
     let warnings = []
     let stats = {}
-    if (!Number.isInteger(params.furnaces) || params.furnaces < 1) {
-        errors.push("furnaces must be a positive integer")
+    if (!Number.isInteger(params.machines) || params.machines < 1) {
+        errors.push("machines must be a positive integer")
     }
     if (params.columns !== 1 && params.columns !== 2) {
         errors.push("columns must be 1 or 2")
     }
-    let known = (key, kind) => {
+    for (let key of ["inputInserters", "outputInserters"]) {
+        if (params[key] !== 1 && params[key] !== 2) {
+            errors.push(`${key} must be 1 or 2`)
+        }
+    }
+    let known = (key, kinds) => {
         let info = data.blueprint_entities[params[key]]
-        if (!info || info.type !== kind) {
-            errors.push(`${key} "${params[key]}" is not a known ${kind}`)
+        if (!info || !kinds.includes(info.type)) {
+            errors.push(`${key} "${params[key]}" is not a known ${kinds[0]}`)
             return false
         }
         return true
     }
-    known("furnace", "furnace")
-    known("inputBelt", "transport-belt")
-    known("outputBelt", "transport-belt")
-    let okIi = known("inputInserter", "inserter")
-    let okOi = known("outputInserter", "inserter")
-    let okPole = known("pole", "electric-pole")
+    known("machine", ["furnace", "assembling-machine"])
+    known("inputBelt", ["transport-belt"])
+    known("outputBelt", ["transport-belt"])
+    let okIi = known("inputInserter", ["inserter"])
+    let okOi = known("outputInserter", ["inserter"])
+    let okPole = known("pole", ["electric-pole"])
     if (okIi && !ALLOWED_INSERTERS.includes(params.inputInserter)) {
         errors.push(`inputInserter must be one of ${ALLOWED_INSERTERS.join(", ")}`)
     }
@@ -47,54 +86,71 @@ export function validateParams(params, requirement, data) {
     if (errors.length > 0) {
         return {errors, warnings, stats}
     }
+    let reason = ineligibleReason(data, requirement.recipe, params.machine)
+    if (reason) {
+        return {errors: [reason], warnings, stats}
+    }
 
     let recipe = lookupRecipe(data, requirement.recipe)
-    let furnace = data.blueprint_entities[params.furnace]
-    let crafts = furnaceCrafts(furnace, recipe)
-    let inPerFurnace = recipe.ingredients[0].amount * crafts
-    let outPerFurnace = recipe.results[0].amount * crafts
-    let produced = outPerFurnace * params.furnaces
-    let fewest = Math.ceil(requirement.rate / outPerFurnace - 1e-9)
-    stats.furnaceOutput = outPerFurnace
-    stats.furnaceInput = inPerFurnace
+    let machine = data.blueprint_entities[params.machine]
+    let crafts = machineCrafts(machine, recipe)
+    let outPerMachine = recipe.results[0].amount * crafts
+    let produced = outPerMachine * params.machines
+    let fewest = Math.ceil(requirement.rate / outPerMachine - 1e-9)
+    stats.machineOutput = outPerMachine
     stats.produced = produced
     stats.needed = requirement.rate
-    stats.fewestFurnaces = fewest
+    stats.fewestMachines = fewest
     if (produced < requirement.rate - 1e-9) {
-        errors.push(`${params.furnaces} furnaces produce ${produced.toFixed(3)}/s, but ${requirement.rate.toFixed(3)}/s is needed; at least ${fewest} are required`)
+        errors.push(`${params.machines} machines produce ${produced.toFixed(3)}/s, but ${requirement.rate.toFixed(3)}/s is needed; at least ${fewest} are required`)
+        return {errors, warnings, stats}
     }
-    if (params.furnaces > fewest + 2) {
-        warnings.push(`${params.furnaces} furnaces is more than needed (${fewest})`)
+    if (params.machines > fewest * 2 + 2) {
+        warnings.push(`${params.machines} machines is much more than needed (${fewest})`)
     }
 
-    // Belts. Each input belt serves one column; the output belt takes it all.
-    let perColumn = Math.ceil(params.furnaces / params.columns)
-    let inRate = perColumn * inPerFurnace
+    // Machines only work as much as is needed, so flows scale with how busy
+    // they are.
+    let busy = requirement.rate / produced
+    stats.busy = busy
+    let perMachine = recipe.ingredients.map(i => i.amount * crafts * busy)
+    let inPerMachine = perMachine.reduce((a, b) => a + b, 0)
+    let outFlow = outPerMachine * busy
+    stats.machineInput = inPerMachine
+    stats.machineOutputFlow = outFlow
+
+    // Belts. Each input belt serves one column. With two ingredients each
+    // keeps to its own lane, so each gets half the belt.
+    let perColumn = Math.ceil(params.machines / params.columns)
     let inCap = beltThroughput(data.blueprint_entities[params.inputBelt])
+    let laneCap = recipe.ingredients.length === 2 ? inCap / 2 : inCap
+    stats.inputBeltCapacity = inCap
+    stats.inputBeltLoad = perColumn * inPerMachine
+    recipe.ingredients.forEach((ing, i) => {
+        let load = perColumn * perMachine[i]
+        if (load > laneCap + 1e-9) {
+            errors.push(`input belt (${params.inputBelt}) carries ${laneCap}/s of ${ing.name} (${recipe.ingredients.length === 2 ? "one lane" : "both lanes"}) but a column needs ${load.toFixed(2)}/s`)
+        }
+    })
     // Inserters drop onto the far lane of a belt only. With one column, all of
     // them are on the same side, so the output belt carries half its rate.
     let outCap = beltThroughput(data.blueprint_entities[params.outputBelt]) * (params.columns === 1 ? 0.5 : 1)
-    stats.inputBeltLoad = inRate
-    stats.inputBeltCapacity = inCap
-    stats.outputBeltLoad = produced
+    stats.outputBeltLoad = requirement.rate
     stats.outputBeltCapacity = outCap
-    if (inRate > inCap + 1e-9) {
-        errors.push(`input belt (${params.inputBelt}) carries ${inCap}/s but a column needs ${inRate.toFixed(2)}/s`)
-    }
-    if (produced > outCap + 1e-9) {
-        errors.push(`output belt (${params.outputBelt}) carries ${outCap}/s here (${params.columns === 1 ? "one lane, since all the output inserters are on one side" : "both lanes"}) but ${produced.toFixed(2)}/s is produced`)
+    if (requirement.rate > outCap + 1e-9) {
+        errors.push(`output belt (${params.outputBelt}) carries ${outCap}/s here (${params.columns === 1 ? "one lane, since all the output inserters are on one side" : "both lanes"}) but ${requirement.rate.toFixed(2)}/s is produced`)
     }
 
     // Inserters.
-    let inIns = inserterThroughput(data.blueprint_entities[params.inputInserter], true)
-    let outIns = inserterThroughput(data.blueprint_entities[params.outputInserter], false)
+    let inIns = inserterThroughput(data.blueprint_entities[params.inputInserter], true) * params.inputInserters
+    let outIns = inserterThroughput(data.blueprint_entities[params.outputInserter], false) * params.outputInserters
     stats.inputInserterRate = inIns
     stats.outputInserterRate = outIns
-    if (inIns < inPerFurnace) {
-        errors.push(`${params.inputInserter} moves about ${inIns.toFixed(2)}/s from a belt, but a furnace consumes ${inPerFurnace.toFixed(2)}/s`)
+    if (inIns < inPerMachine) {
+        errors.push(`${params.inputInserters} ${params.inputInserter}(s) move about ${inIns.toFixed(2)}/s from a belt, but a machine takes in ${inPerMachine.toFixed(2)}/s`)
     }
-    if (outIns < outPerFurnace) {
-        errors.push(`${params.outputInserter} moves about ${outIns.toFixed(2)}/s, but a furnace produces ${outPerFurnace.toFixed(2)}/s`)
+    if (outIns < outFlow) {
+        errors.push(`${params.outputInserters} ${params.outputInserter}(s) move about ${outIns.toFixed(2)}/s, but a machine puts out ${outFlow.toFixed(2)}/s`)
     }
     return {errors, warnings, stats}
 }
@@ -121,11 +177,13 @@ export function validateLayout(entities, data) {
     }
 
     // Inserters pick up from the tile their direction points at, and drop onto
-    // the opposite one. Every furnace needs one feeding it and one emptying it.
+    // the opposite one. Every machine needs one feeding it and one emptying it.
     let feeders = new Map()
     let takers = new Map()
     let at = (tx, ty) => tiles.get(`${tx},${ty}`)
-    let connectable = e => e !== undefined && (typeOf(e) === "furnace" || typeOf(e) === "transport-belt")
+    let isMachine = e => e !== undefined && isMachineType(typeOf(e))
+    let connectable = e => e !== undefined && (isMachine(e) || typeOf(e) === "transport-belt")
+    let kind = e => isMachine(e) ? "machine" : typeOf(e)
     for (let e of entities) {
         if (typeOf(e) !== "inserter") {
             continue
@@ -139,29 +197,29 @@ export function validateLayout(entities, data) {
         if (!connectable(drop)) {
             errors.push(`${e.name} at (${e.x},${e.y}) has nothing to drop onto`)
         }
-        if (connectable(pick) && connectable(drop) && typeOf(pick) === typeOf(drop)) {
-            errors.push(`${e.name} at (${e.x},${e.y}) moves between two ${typeOf(pick)}s`)
+        if (connectable(pick) && connectable(drop) && kind(pick) === kind(drop)) {
+            errors.push(`${e.name} at (${e.x},${e.y}) moves between two ${kind(pick)}s`)
         }
-        if (drop && typeOf(drop) === "furnace") {
+        if (isMachine(drop)) {
             feeders.set(drop, (feeders.get(drop) || 0) + 1)
         }
-        if (pick && typeOf(pick) === "furnace") {
+        if (isMachine(pick)) {
             takers.set(pick, (takers.get(pick) || 0) + 1)
         }
     }
     for (let e of entities) {
-        if (typeOf(e) !== "furnace") {
+        if (!isMachine(e)) {
             continue
         }
         if (!feeders.has(e)) {
-            errors.push(`furnace at (${e.x},${e.y}) has no inserter feeding it`)
+            errors.push(`machine at (${e.x},${e.y}) has no inserter feeding it`)
         }
         if (!takers.has(e)) {
-            errors.push(`furnace at (${e.x},${e.y}) has no inserter emptying it`)
+            errors.push(`machine at (${e.x},${e.y}) has no inserter emptying it`)
         }
     }
 
-    // Power: every furnace and inserter must overlap a pole's supply area, and
+    // Power: every machine and inserter must overlap a pole's supply area, and
     // the poles must be connected by wire.
     let poles = entities.filter(e => typeOf(e) === "electric-pole")
     let supply = p => {
@@ -178,7 +236,7 @@ export function validateLayout(entities, data) {
     }
     let areas = poles.map(supply)
     for (let e of entities) {
-        if ((typeOf(e) === "furnace" || typeOf(e) === "inserter") && !areas.some(a => covered(a, e))) {
+        if ((isMachine(e) || typeOf(e) === "inserter") && !areas.some(a => covered(a, e))) {
             errors.push(`${e.name} at (${e.x},${e.y}) is not covered by any pole`)
         }
     }

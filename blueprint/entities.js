@@ -31,9 +31,24 @@ export function inserterThroughput(info, fromBelt) {
     return fromBelt ? rate * 0.7 : rate
 }
 
-// Crafts per second of one furnace on a recipe.
-export function furnaceCrafts(furnaceInfo, recipe) {
-    return furnaceInfo.crafting_speed / recipe.energy_required
+// Crafts per second of one machine on a recipe.
+export function machineCrafts(machineInfo, recipe) {
+    return machineInfo.crafting_speed / recipe.energy_required
+}
+
+// Furnaces and assembling machines.
+export function isMachineType(type) {
+    return type === "furnace" || type === "assembling-machine"
+}
+
+let solidCache = new WeakMap()
+
+// The names of the items which are not fluids.
+export function solidItems(data) {
+    if (!solidCache.has(data)) {
+        solidCache.set(data, new Set(data.items.filter(i => i.type !== "fluid").map(i => i.key)))
+    }
+    return solidCache.get(data)
 }
 
 export function lookupRecipe(data, key) {

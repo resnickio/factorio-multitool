@@ -577,9 +577,18 @@ function footprint(proto) {
 }
 
 const blueprint_entities = {}
-for (let [name, proto] of Object.entries(raw.furnace)) {
-    if (proto.energy_source.type === "electric") {
-        blueprint_entities[name] = {type: "furnace", ...footprint(proto), crafting_speed: proto.crafting_speed, energy_usage: energy(proto.energy_usage)}
+for (let type of ["furnace", "assembling-machine"]) {
+    for (let [name, proto] of Object.entries(raw[type])) {
+        if (proto.energy_source.type === "electric" && proto.crafting_categories) {
+            blueprint_entities[name] = {
+                type,
+                ...footprint(proto),
+                crafting_speed: proto.crafting_speed,
+                crafting_categories: proto.crafting_categories,
+                module_slots: proto.module_slots || 0,
+                energy_usage: energy(proto.energy_usage),
+            }
+        }
     }
 }
 for (let [name, proto] of Object.entries(raw["transport-belt"])) {

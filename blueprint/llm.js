@@ -1,7 +1,7 @@
 // Asks the model for a layout, and feeds the validator's complaints back to it
 // until the layout is accepted or the attempts run out.
 
-import { describeTask, SYSTEM_PROMPT, parseReply, buildSmeltingBlueprint } from "./dsl.js"
+import { describeTask, SYSTEM_PROMPT, parseReply, buildColumnBlueprint } from "./dsl.js"
 
 const API_URL = "https://api.anthropic.com/v1/messages"
 
@@ -30,10 +30,10 @@ async function callModel({apiKey, model, messages, fetchFn}) {
     return body.content.filter(part => part.type === "text").map(part => part.text).join("")
 }
 
-// Returns the result of buildSmeltingBlueprint for the model's last attempt,
+// Returns the result of buildColumnBlueprint for the model's last attempt,
 // plus {params, attempts, log}. The log lists what was said at each step.
-export async function askForLayout({apiKey, model, requirement, furnace, data, maxAttempts = 3, fetchFn = fetch}) {
-    let task = describeTask(requirement, furnace, data)
+export async function askForLayout({apiKey, model, requirement, machine, data, maxAttempts = 3, fetchFn = fetch}) {
+    let task = describeTask(requirement, machine, data)
     let messages = [{role: "user", content: JSON.stringify(task)}]
     let log = []
     let last = null
@@ -42,14 +42,14 @@ export async function askForLayout({apiKey, model, requirement, furnace, data, m
         log.push({attempt, reply: text})
         let params
         try {
-            params = {...parseReply(text), furnace}
+            params = {...parseReply(text), machine}
         } catch (e) {
             last = {ok: false, errors: [e.message], warnings: [], stats: {}}
             messages.push({role: "assistant", content: text})
             messages.push({role: "user", content: `That could not be read: ${e.message}. Reply with only the JSON object.`})
             continue
         }
-        let result = buildSmeltingBlueprint(params, requirement, data)
+        let result = buildColumnBlueprint(params, requirement, data)
         last = {...result, params}
         log[log.length - 1].errors = result.errors
         if (result.ok) {
