@@ -12,14 +12,27 @@
 // (one, or two for more throughput), and poles in the free tile at its bottom
 // edge. In a blueprint an inserter's direction points at the tile it picks up
 // from (checked against the game).
+//
+// Recipes with fluid ingredients turn each machine to face its fluid inputs at
+// the input belt. Each fluid has a vertical collector pipe beyond the belt, and
+// each machine reaches it through a pair of underground pipes which pass under
+// the belt:
+//
+//   collector | exit ==tunnel== entry | machine port
+//
+// A second fluid tunnels further, under the first fluid's pipe. The collector
+// extends one tile above the first machine, where the fluid is connected.
 
-import { entityInfo, NORTH, SOUTH, EAST, WEST } from "./entities.js"
+import {
+    entityInfo, lookupRecipe, fluidIngredients, insertRows, fluidInputPorts, STEP, opposite,
+    NORTH, SOUTH, EAST, WEST,
+} from "./entities.js"
 import { validateLayout } from "./validate.js"
 
 // Params:
-//   machine, machines, recipe (for assembling machines), columns (1 or 2),
-//   inputBelt, outputBelt, inputInserter, outputInserter,
-//   inputInserters, outputInserters (1 or 2 per machine), pole
+//   machine, machines, recipe, columns (1 or 2), inputBelt, outputBelt,
+//   inputInserter, outputInserter, inputInserters, outputInserters (per
+//   machine), pole, pipe, pipeToGround (for fluid recipes)
 export function placeColumns(params, data) {
     // Poles go as far apart as still covers every inserter and machine.
     let best = null
@@ -40,11 +53,12 @@ function place(params, data, poleStep) {
     }
     let size = machine.width
     let mid = Math.floor(size / 2)
+    let recipe = lookupRecipe(data, params.recipe)
+    let fluids = fluidIngredients(data, recipe)
     let columns = params.columns
     let counts = columns === 1
         ? [params.machines]
         : [Math.ceil(params.machines / 2), Math.floor(params.machines / 2)]
-    let insertRows = count => count === 2 ? [mid, mid - 1] : [mid]
 
     // Tile columns, left to right.
     let x
@@ -63,36 +77,75 @@ function place(params, data, poleStep) {
         entities.push({name, x: tx, y: ty, w: info.width, h: info.height, direction, ...extra})
     }
 
+    // A recipe of fluids alone has nothing to bring on a belt.
+    let hasSolids = fluids.length < recipe.ingredients.length
     let rows = Math.max(...counts) * size
     for (let y = 0; y < rows; y++) {
-        add(params.inputBelt, x.belt1, y, SOUTH)
+        if (hasSolids) {
+            add(params.inputBelt, x.belt1, y, SOUTH)
+        }
         add(params.outputBelt, x.outBelt, y, SOUTH)
-        if (columns === 2) {
+        if (columns === 2 && hasSolids) {
             add(params.inputBelt, x.belt2, y, SOUTH)
         }
     }
 
-    let recipe = machine.type === "assembling-machine" ? {recipe: params.recipe} : {}
+    let machineExtra = machine.type === "assembling-machine" ? {recipe: params.recipe} : {}
     for (let c = 0; c < columns; c++) {
         let left = c === 0
+        // Fluid-fed machines face their inputs at the input belt.
+        let facing = fluids.length === 0 ? NORTH : (left ? WEST : EAST)
+        let ports = fluids.length === 0 ? [] : fluidInputPorts(machine, facing).slice(0, fluids.length)
+        let taken = new Set(ports.map(p => p.ty))
+        let inRows = insertRows(size, taken).slice(0, params.inputInserters)
+        let outRows = insertRows(size, new Set()).slice(0, params.outputInserters)
+        let insX = left ? x.ins1 : x.ins2
         for (let i = 0; i < counts[c]; i++) {
             let y = i * size
-            add(params.machine, left ? x.machine1 : x.machine2, y, NORTH, recipe)
-            for (let row of insertRows(params.inputInserters)) {
-                add(params.inputInserter, left ? x.ins1 : x.ins2, y + row, left ? WEST : EAST)
+            let mx = left ? x.machine1 : x.machine2
+            add(params.machine, mx, y, facing, machineExtra)
+            for (let row of hasSolids ? inRows : []) {
+                add(params.inputInserter, insX, y + row, left ? WEST : EAST)
             }
-            for (let row of insertRows(params.outputInserters)) {
+            for (let row of outRows) {
                 add(params.outputInserter, left ? x.out1 : x.out2, y + row, left ? WEST : EAST)
             }
+            ports.forEach((port, k) => {
+                let [dx] = STEP[port.facing]
+                let entryX = mx + port.outX
+                let exitX = entryX + dx * (2 + 2 * k)
+                // The opening of the entry faces the machine, the exit's faces away.
+                add(params.pipeToGround, entryX, y + port.outY, opposite(port.facing))
+                add(params.pipeToGround, exitX, y + port.outY, port.facing)
+            })
         }
+        // Collector pipes, from one tile above the first machine.
+        ports.forEach((port, k) => {
+            let [dx] = STEP[port.facing]
+            let collectorX = x[left ? "machine1" : "machine2"] + port.outX + dx * (3 + 2 * k)
+            for (let y = -1; y < counts[c] * size; y++) {
+                add(params.pipe, collectorX, y, NORTH)
+            }
+        })
     }
 
-    // Poles: one every poleStep machines, beside each inserter column. The
-    // pole next to the left output inserters also reaches the right ones.
-    let poleColumns = columns === 1 ? [[x.ins1, 0], [x.out1, 0]] : [[x.ins1, 0], [x.out1, 0], [x.ins2, 1]]
-    for (let [tx, c] of poleColumns) {
+    // Poles: one every poleStep machines, beside the inserters. The pole next
+    // to the left output inserters also reaches the right ones. With fluids the
+    // input side has no free tile beside the inserters, so those poles go
+    // outside the fluid connections.
+    let inputPole = (left) => {
+        if (fluids.length === 0) {
+            return {tx: left ? x.ins1 : x.ins2, row: size - 1}
+        }
+        return {tx: left ? x.ins1 - 2 : x.ins2 + 2, row: mid}
+    }
+    let poleColumns = [[inputPole(true), 0], [{tx: x.out1, row: size - 1}, 0]]
+    if (columns === 2) {
+        poleColumns.push([inputPole(false), 1])
+    }
+    for (let [{tx, row}, c] of poleColumns) {
         for (let i = 0; i < counts[c]; i += poleStep) {
-            add(params.pole, tx, i * size + size - 1, NORTH)
+            add(params.pole, tx, i * size + row, NORTH)
         }
     }
     return {entities, width: columns === 1 ? 4 + size : 7 + 2 * size, height: rows}

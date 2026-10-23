@@ -81,18 +81,21 @@ export function makeBlueprint(entities, label, iconNames, data) {
 
 const ARROW = {[NORTH]: "^", [EAST]: ">", [SOUTH]: "v", [WEST]: "<"}
 
-// One character per tile: F furnace, A assembling machine, P pole, v for belts, and ) or ( for
+// One character per tile: F furnace, A assembling machine, P pole, = pipe, O underground pipe, v for belts, and ) or ( for
 // inserters, pointing where they drop items.
 export function previewLayout(entities, data) {
-    let width = Math.max(...entities.map(e => e.x + e.w))
-    let height = Math.max(...entities.map(e => e.y + e.h))
+    // Pipes can lie above and to the left of the machines.
+    let left = Math.min(...entities.map(e => e.x))
+    let top = Math.min(...entities.map(e => e.y))
+    let width = Math.max(...entities.map(e => e.x + e.w)) - left
+    let height = Math.max(...entities.map(e => e.y + e.h)) - top
     let grid = []
     for (let y = 0; y < height; y++) {
         grid.push(new Array(width).fill(" "))
     }
     for (let e of entities) {
         let type = entityInfo(data, e.name).type
-        let ch = {furnace: "F", "assembling-machine": "A", "electric-pole": "P"}[type]
+        let ch = {furnace: "F", "assembling-machine": "A", "electric-pole": "P", pipe: "=", "pipe-to-ground": "O"}[type]
         if (type === "transport-belt") {
             ch = ARROW[e.direction]
         } else if (type === "inserter") {
@@ -102,7 +105,7 @@ export function previewLayout(entities, data) {
         }
         for (let dx = 0; dx < e.w; dx++) {
             for (let dy = 0; dy < e.h; dy++) {
-                grid[e.y + dy][e.x + dx] = ch
+                grid[e.y + dy - top][e.x + dx - left] = ch
             }
         }
     }

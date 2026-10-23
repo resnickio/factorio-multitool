@@ -18,6 +18,9 @@ const TASKS = [
     {name: "steel 15/s, electric furnaces", requirement: {recipe: "steel-plate", rate: 15}, machine: "electric-furnace"},
     {name: "circuits 3/s, assembling machine 2", requirement: {recipe: "electronic-circuit", rate: 3}, machine: "assembling-machine-2"},
     {name: "gears 2/s, assembling machine 2", requirement: {recipe: "iron-gear-wheel", rate: 2}, machine: "assembling-machine-2"},
+    {name: "plastic 4/s, chemical plant", requirement: {recipe: "plastic-bar", rate: 4}, machine: "chemical-plant"},
+    {name: "sulfur 4/s, chemical plant", requirement: {recipe: "sulfur", rate: 4}, machine: "chemical-plant"},
+    {name: "battery 6/s, chemical plant", requirement: {recipe: "battery", rate: 6}, machine: "chemical-plant"},
     {name: "circuits 20/s, assembling machine 3", requirement: {recipe: "electronic-circuit", rate: 20}, machine: "assembling-machine-3"},
 ]
 

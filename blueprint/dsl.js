@@ -6,7 +6,7 @@ import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
 import { makeBlueprint } from "./build.js"
 import {
     entityInfo, beltThroughput, inserterThroughput, machineCrafts, lookupRecipe,
-    ALLOWED_INSERTERS, ALLOWED_POLES,
+    fluidIngredients, fluidInputPorts, insertRows, WEST, ALLOWED_INSERTERS, ALLOWED_POLES,
 } from "./entities.js"
 
 export { ineligibleReason }
@@ -24,13 +24,17 @@ export function describeTask(requirement, machine, data) {
     let info = entityInfo(data, machine)
     let crafts = machineCrafts(info, recipe)
     let outPer = recipe.results[0].amount * crafts
+    let fluids = fluidIngredients(data, recipe)
+    let ports = fluids.length === 0 ? [] : fluidInputPorts(info, WEST).slice(0, fluids.length)
     return {
         task: "machine_column",
         recipe: requirement.recipe,
         ingredients: recipe.ingredients.map(i => ({
             item: i.name,
+            ...(fluids.includes(i) ? {fluid: true} : {}),
             per_second_at_full_speed: Number((i.amount * crafts).toFixed(4)),
         })),
+        max_input_inserters_per_machine: Math.min(2, insertRows(info.width, new Set(ports.map(p => p.ty))).length),
         output_item: recipe.results[0].name,
         required_output_per_second: Number(requirement.rate.toFixed(4)),
         machine,
@@ -53,9 +57,10 @@ export function describeTask(requirement, machine, data) {
 export const SYSTEM_PROMPT = `You design columns of crafting machines for Factorio. You are given a task as JSON. Reply with a single JSON object and nothing else, with exactly these keys:
 - "machines": integer, how many machines (at least fewest_machines). Machines only work as much as is needed, so extra machines each work less, which lowers the load on every inserter and belt; use more when the inserters would otherwise be too slow, but not wastefully many.
 - "columns": 1 or 2. Two columns share the middle output belt and each have their own input belt, which halves the load on an input belt.
+Fluid ingredients (marked "fluid": true) arrive by pipe: they use no belt lane and no inserter, and their flow is not limited by anything you choose here. If every ingredient is a fluid, the input belt and input inserters are not built, so their choices do not matter (give any valid ones). Fluid connections take up rows beside each machine, so max_input_inserters_per_machine may be 1.
 - "input_belt", "output_belt": belt names from options.belts, whose rates are for both lanes. With two ingredients, each is kept to its own lane of the input belt, so each can use only half the belt's rate; with one ingredient it can use both lanes. One input belt serves one column: it carries (machines / columns, rounded up) times each ingredient's rate per machine, scaled by how busy the machines are (required_output / (machines x output_per_second_at_full_speed)). The output belt carries the whole required output, but inserters only drop onto the far lane of a belt: with one column all output goes onto one lane, so the output belt carries only half its listed rate; with two columns it carries the full rate. Prefer the cheapest belt that is sufficient.
 - "input_inserter", "output_inserter": inserter names from options.inserters.
-- "input_inserter_count", "output_inserter_count": 1 or 2 inserters per machine on each side. All of a machine's ingredients arrive through its input inserters together, so they must move the sum of the ingredient rates (scaled by how busy the machine is); the output inserters must move the output rate. Prefer fewer and cheaper inserters that are sufficient.
+- "input_inserter_count", "output_inserter_count": 1 or 2 inserters per machine on each side (the input count at most max_input_inserters_per_machine). All of a machine's ingredients arrive through its input inserters together, so they must move the sum of the ingredient rates (scaled by how busy the machine is); the output inserters must move the output rate. Prefer fewer and cheaper inserters that are sufficient.
 - "pole": a pole name from options.poles.
 - "notes": one short sentence on your choices.
 Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why.`
@@ -99,7 +104,7 @@ export function defaultParams(requirement, machine, data) {
         }
     }
     inserterChoices.sort((a, b) => a.cost - b.cost)
-    let base = {machine, recipe: requirement.recipe, pole: "medium-electric-pole"}
+    let base = {machine, recipe: requirement.recipe, pole: "medium-electric-pole", pipe: "pipe", pipeToGround: "pipe-to-ground"}
     for (let machines = fewest; machines <= fewest * 3 + 4; machines++) {
         for (let columns of [1, 2]) {
             for (let input of inserterChoices) {
@@ -131,7 +136,7 @@ export function defaultParams(requirement, machine, data) {
 // Validates, places and re-validates. Returns {ok, errors, warnings, stats,
 // entities, blueprint}.
 export function buildColumnBlueprint(params, requirement, data) {
-    params = {...params, recipe: requirement.recipe}
+    params = {pipe: "pipe", pipeToGround: "pipe-to-ground", ...params, recipe: requirement.recipe}
     let checked = validateParams(params, requirement, data)
     if (checked.errors.length > 0) {
         return {ok: false, errors: checked.errors, warnings: checked.warnings, stats: checked.stats}

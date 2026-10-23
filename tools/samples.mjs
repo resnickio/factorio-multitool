@@ -8,6 +8,11 @@ export const SAMPLES = {
     "steel-two-columns": {recipe: "steel-plate", rate: 3.75, override: {columns: 2}},
     "circuits-assembler": {recipe: "electronic-circuit", rate: 3, machine: "assembling-machine-2"},
     "gears-assembler": {recipe: "iron-gear-wheel", rate: 2, machine: "assembling-machine-2"},
+    "plastic-chemical-plant": {recipe: "plastic-bar", rate: 4, machine: "chemical-plant"},
+    "battery-chemical-plant": {recipe: "battery", rate: 2, machine: "chemical-plant", override: {columns: 2}},
+    "explosives-chemical-plant": {recipe: "explosives", rate: 2, machine: "chemical-plant"},
+    "sulfur-two-columns": {recipe: "sulfur", rate: 4, machine: "chemical-plant", override: {columns: 2}},
+    "solid-fuel-chemical-plant": {recipe: "solid-fuel-from-petroleum-gas", rate: 2, machine: "chemical-plant"},
 }
 
 export const DEFAULT_MACHINE = "electric-furnace"

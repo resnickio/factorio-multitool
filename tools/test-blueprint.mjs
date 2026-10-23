@@ -144,6 +144,92 @@ await test("recipes which cannot be built in a column say why", () => {
     assert.equal(ineligibleReason(data, "iron-plate", F), null)
 })
 
+const plastic = {recipe: "plastic-bar", rate: 4}
+const sulfur = {recipe: "sulfur", rate: 4}
+const CP = "chemical-plant"
+
+await test("a fluid recipe gets underground pipes under the belt and a collector pipe", () => {
+    let r = build(plastic, CP)
+    assert.deepEqual(r.errors, [])
+    let counts = {}
+    for (let e of r.entities) {
+        counts[e.name] = (counts[e.name] || 0) + 1
+    }
+    let machines = counts[CP]
+    assert.equal(counts["pipe-to-ground"], machines * 2)
+    // One collector, from a tile above the first machine to the last row.
+    assert.equal(counts["pipe"], machines * 3 + 1)
+    // Machines face their fluid inputs at the belt: west on the left.
+    assert.ok(r.blueprint.entities.filter(e => e.name === CP).every(e => e.direction === 12))
+    assert.ok(r.blueprint.entities.filter(e => e.name === CP).every(e => e.recipe === "plastic-bar"))
+    console.log("\n" + previewLayout(r.entities, data).split("\n").slice(0, 8).join("\n") + "\n")
+})
+
+await test("two fluids use separate collectors, the second tunnelling further", () => {
+    let r = build(sulfur, CP, {columns: 1})
+    assert.deepEqual(r.errors, [])
+    let pipeXs = new Set(r.entities.filter(e => e.name === "pipe").map(e => e.x))
+    assert.equal(pipeXs.size, 2)
+    let underX = new Set(r.entities.filter(e => e.name === "pipe-to-ground").map(e => e.x))
+    assert.deepEqual([...underX].sort((a, b) => a - b), [-3, -1, 1])
+})
+
+await test("a recipe of fluids alone has no input belt or input inserters", () => {
+    let r = build(sulfur, CP)
+    assert.deepEqual(r.errors, [])
+    // Only the output belt exists.
+    let beltColumns = new Set(r.entities.filter(e => /transport-belt/.test(e.name)).map(e => e.x))
+    assert.equal(beltColumns.size, 1)
+    let inserters = r.entities.filter(e => /inserter/.test(e.name))
+    assert.equal(inserters.length, params(sulfur, CP).machines * params(sulfur, CP).outputInserters)
+})
+
+await test("two columns each get their own collectors", () => {
+    let r = build({recipe: "battery", rate: 2}, CP, {columns: 2})
+    assert.deepEqual(r.errors, [])
+    let xs = [...new Set(r.entities.filter(e => e.name === "pipe").map(e => e.x))].sort((a, b) => a - b)
+    assert.equal(xs.length, 2)
+    assert.ok(xs[0] < 0 && xs[1] > 12)
+})
+
+await test("the layout validator catches a missing pipe, a broken tunnel and mixed fluids", () => {
+    let p = {...params(sulfur, CP), recipe: "sulfur", columns: 1, machines: 3}
+    let placed = placeColumns(p, data)
+    assert.deepEqual(validateLayout(placed.entities, data).errors, [])
+    // Remove the first fluid's collector.
+    let collectorX = Math.max(...placed.entities.filter(e => e.name === "pipe").map(e => e.x))
+    let noCollector = placed.entities.filter(e => !(e.name === "pipe" && e.x === collectorX))
+    let v = validateLayout(noCollector, data)
+    assert.ok(v.errors.some(e => /separate pipe networks|not connected/.test(e)), v.errors.join("; "))
+    // Remove one exit of a tunnel.
+    let exit = placed.entities.find(e => e.name === "pipe-to-ground" && e.x === -1)
+    let broken = placed.entities.filter(e => e !== exit)
+    assert.ok(validateLayout(broken, data).errors.some(e => /no partner/.test(e)))
+    // Turn a machine so its inputs do not meet the pipes.
+    let turned = placed.entities.map(e => e.name === CP ? {...e, direction: 4} : e)
+    assert.ok(validateLayout(turned, data).errors.length > 0)
+    // Join the two collectors with a pipe.
+    let xsPipes = [...new Set(placed.entities.filter(e => e.name === "pipe").map(e => e.x))].sort((a, b) => a - b)
+    let bridge = {name: "pipe", x: xsPipes[0] + 1, y: -1, w: 1, h: 1, direction: 0}
+    let joined = placed.entities.concat([bridge])
+    assert.ok(validateLayout(joined, data).errors.some(e => /share one pipe network/.test(e)), validateLayout(joined, data).errors.join("; "))
+})
+
+await test("fluid recipes say what they cannot do", () => {
+    assert.equal(ineligibleReason(data, "plastic-bar", CP), null)
+    assert.equal(ineligibleReason(data, "sulfur", CP), null)
+    assert.match(ineligibleReason(data, "rocket-fuel", "assembling-machine-2"), /fluid/)
+    assert.match(ineligibleReason(data, "sulfuric-acid", CP), /makes a fluid/)
+    assert.match(ineligibleReason(data, "advanced-oil-processing", "oil-refinery"), /fluid/)
+})
+
+await test("a fluid layout leaves room for a second input inserter only when a row is free", () => {
+    // One fluid leaves two rows beside the machine for inserters; two fluids leave one.
+    assert.deepEqual(validateParams({...params(plastic, CP), inputInserters: 2}, plastic, data).errors.filter(e => /fit beside/.test(e)), [])
+    let two = validateParams({...params(sulfur, CP), inputInserters: 2}, sulfur, data)
+    assert.ok(two.errors.some(e => /only 1 inserter/.test(e)), two.errors.join("; "))
+})
+
 await test("validator rejects too few machines", () => {
     let v = validateParams({...params(iron), machines: 10}, iron, data)
     assert.ok(v.errors.some(e => /at least 24/.test(e)), v.errors.join("; "))

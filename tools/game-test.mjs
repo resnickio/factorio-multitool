@@ -46,7 +46,9 @@ if (!sample) {
 const data = JSON.parse(fs.readFileSync(path.join(here, "../data/space-age-2.1.23.json"), "utf8"))
 const machine = sample.machine || DEFAULT_MACHINE
 const recipe = data.recipes.find(r => r.key === sample.recipe)
-const inputs = recipe.ingredients.map(i => i.name)
+const solids = new Set(data.items.filter(i => i.type !== "fluid").map(i => i.key))
+const inputs = recipe.ingredients.map(i => i.name).filter(n => solids.has(n))
+const fluids = recipe.ingredients.map(i => i.name).filter(n => !solids.has(n))
 const outputItem = recipe.results[0].name
 let params, blueprint
 if (args.model) {
@@ -103,6 +105,8 @@ local BLUEPRINT = "${blueprint}"
 -- Each ingredient rides its own lane of the input belt; a single one uses both.
 local INPUTS = {${inputs.map(i => '"' + i + '"').join(", ")}}
 local OUTPUT_ITEM = "${outputItem}"
+local HAS_SOLIDS = ${inputs.length > 0}
+local FLUIDS = {${fluids.map(i => '"' + i + '"').join(", ")}}
 local COLUMNS = ${params.columns}
 local FURNACE_SIZE = ${data.blueprint_entities[params.machine].width}
 local SECONDS = ${SECONDS}
@@ -164,7 +168,13 @@ local function setup()
     miny = math.min(miny, b.position.y); maxy = math.max(maxy, b.position.y)
   end
   say(string.format("belts: %d, x %.1f..%.1f, y %.1f..%.1f", #belts, minx, maxx, miny, maxy))
-  state.minx, state.miny, state.maxy = minx, miny, maxy
+  if not HAS_SOLIDS then
+    -- Only the output belt exists; the rest of the layout is placed around it.
+    local out_x = minx
+    minx = out_x - (3 + FURNACE_SIZE)
+    maxx = out_x + (3 + FURNACE_SIZE)
+  end
+  state.minx, state.maxx, state.miny, state.maxy = minx, maxx, miny, maxy
   state.inputs = {minx}
   if COLUMNS == 2 then state.inputs[2] = maxx end
   state.output_x = minx + 3 + FURNACE_SIZE
@@ -176,8 +186,18 @@ local function setup()
   -- Power: an interface which makes plenty, inside the first pole's area.
   local poles = surface.find_entities_filtered{type = "electric-pole", area = area}
   say("poles: " .. #poles)
-  local pole = poles[1]
-  local eei = surface.create_entity{name = "electric-energy-interface", position = {pole.position.x - 3, pole.position.y}, force = game.forces.player}
+  local eei = nil
+  local offsets = {{-3, 0}, {3, 0}, {0, -3}, {0, 3}, {-4, 2}, {4, 2}, {-4, -2}, {4, -2}, {0, -6}, {-6, 0}, {6, 0}}
+  for _, pole in pairs(poles) do
+    for _, o in pairs(offsets) do
+      local pos = {pole.position.x + o[1], pole.position.y + o[2]}
+      if surface.can_place_entity{name = "electric-energy-interface", position = pos, force = game.forces.player} then
+        eei = surface.create_entity{name = "electric-energy-interface", position = pos, force = game.forces.player}
+        break
+      end
+    end
+    if eei then break end
+  end
   if eei then
     eei.power_production = 100000000 / 60
     eei.electric_buffer_size = 1000000000
@@ -185,6 +205,22 @@ local function setup()
     say("energy interface placed at " .. serpent.line(eei.position))
   else
     say("could not place energy interface")
+  end
+
+  -- Fluids: an infinite supply on top of each collector pipe. Fluid k uses the
+  -- pipe 2k+2 tiles beyond the belt; a second column has its own on the far side.
+  for k, fluid in ipairs(FLUIDS) do
+    local sides = {{state.minx - 2 - 2 * (k - 1)}}
+    if COLUMNS == 2 then sides[2] = {state.maxx + 2 + 2 * (k - 1)} end
+    for _, side in pairs(sides) do
+      local pipe = surface.create_entity{name = "infinity-pipe", position = {side[1], state.miny - 2}, force = game.forces.player}
+      if pipe then
+        pipe.set_infinity_pipe_filter{name = fluid, percentage = 1, mode = "at-least"}
+        say("supplying " .. fluid .. " at " .. serpent.line(pipe.position))
+      else
+        say("could not place a supply for " .. fluid)
+      end
+    end
   end
 end
 
@@ -232,7 +268,7 @@ script.on_event(defines.events.on_tick, function(event)
   if not state.surface then return end
   -- Feed the input belts, and empty the output belt.
   for _, x in pairs(state.inputs) do
-    local belt = state.belt_at(x, state.miny)
+    local belt = HAS_SOLIDS and state.belt_at(x, state.miny)
     if belt then
       for line = 1, 2 do
         local l = belt.get_transport_line(line)

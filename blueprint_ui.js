@@ -148,18 +148,30 @@ function renderResult(root) {
     box.append("div")
         .classed("hint", true)
         .text(`Makes ${s.produced.toFixed(2)}/s of the ${s.needed.toFixed(2)}/s needed. Input belt ${s.inputBeltLoad.toFixed(1)}/${s.inputBeltCapacity}/s, output belt ${s.outputBeltLoad.toFixed(1)}/${s.outputBeltCapacity}/s. Modules are not included.`)
-    if (selected && selected.ingredients.length === 2) {
-        let [a, b] = selected.ingredients
-        box.append("div")
-            .classed("hint", true)
-            .text(`Feed ${a.item.name} on one lane of the input belt and ${b.item.name} on the other.`)
+    if (selected) {
+        let solids = selected.ingredients.filter(i => i.item.phase !== "fluid")
+        let fluids = selected.ingredients.filter(i => i.item.phase === "fluid")
+        if (solids.length === 2) {
+            box.append("div")
+                .classed("hint", true)
+                .text(`Feed ${solids[0].item.name} on one lane of the input belt and ${solids[1].item.name} on the other.`)
+        }
+        if (fluids.length > 0) {
+            let names = fluids.map(f => f.item.name)
+            let where = names.length === 1
+                ? `Connect ${names[0]} to the top of the vertical pipe beside the input belt.`
+                : `Connect ${names[0]} to the top of the vertical pipe nearest the input belt, and ${names[1]} to the next one out.`
+            box.append("div")
+                .classed("hint", true)
+                .text(`${where} With two columns, each side has its own pipes.`)
+        }
     }
     box.append("pre")
         .classed("blueprint-preview", true)
         .text(output.preview)
     box.append("div")
         .classed("hint", true)
-        .text("Belts flow down (v); ) and ( are inserters, F furnaces, A assemblers, P poles.")
+        .text("Belts flow down (v); ) and ( are inserters, F furnaces, A assemblers, P poles, = pipes, O underground pipes.")
     box.append("textarea")
         .classed("blueprint-text", true)
         .attr("readonly", true)

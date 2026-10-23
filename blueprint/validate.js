@@ -2,11 +2,13 @@
 
 import {
     entityInfo, beltThroughput, inserterThroughput, machineCrafts, lookupRecipe,
-    isMachineType, solidItems, ALLOWED_INSERTERS, ALLOWED_POLES, NORTH, EAST, SOUTH, WEST,
+    isMachineType, solidItems, ALLOWED_INSERTERS, ALLOWED_POLES, NORTH, EAST, SOUTH, WEST, STEP,
+    opposite, fluidInputPorts, fluidIngredients, insertRows, FLUID_MACHINES,
 } from "./entities.js"
 
-// Which way an inserter's direction points: at the tile it picks up from.
-const STEP = {[NORTH]: [0, -1], [EAST]: [1, 0], [SOUTH]: [0, 1], [WEST]: [-1, 0]}
+// Fluid flow a collector pipe is assumed to carry, per second. Long pipes carry
+// about this much or more.
+const PIPE_THROUGHPUT = 1000
 
 // Why a recipe cannot be built in a column by the given machine, or null.
 export function ineligibleReason(data, recipeKey, machineName) {
@@ -26,16 +28,21 @@ export function ineligibleReason(data, recipeKey, machineName) {
         return `${machineName} cannot craft ${name}`
     }
     let solids = solidItems(data)
-    for (let i of [...recipe.ingredients, ...recipe.results]) {
-        if (!solids.has(i.name)) {
-            return `${name} uses a fluid, which needs pipes`
+    if (recipe.results.some(i => !solids.has(i.name))) {
+        return `${name} makes a fluid, which a column cannot carry away`
+    }
+    let fluids = fluidIngredients(data, recipe)
+    let solidIngredients = recipe.ingredients.length - fluids.length
+    if (fluids.length > 0) {
+        if (!FLUID_MACHINES.includes(machineName)) {
+            return `${name} uses a fluid, and ${machineName} is not set up for fluid input here (try a chemical plant)`
+        }
+        if (fluids.length > info.fluid_inputs.length) {
+            return `${name} has ${fluids.length} fluid ingredients but ${machineName} has ${info.fluid_inputs.length} fluid inputs`
         }
     }
-    if (recipe.ingredients.length > 2) {
-        return `${name} has ${recipe.ingredients.length} ingredients; a column can feed two on one belt`
-    }
-    if (recipe.ingredients.length === 0) {
-        return `${name} has no ingredients`
+    if (solidIngredients > 2) {
+        return `${name} has ${solidIngredients} solid ingredients; a column can feed two on one belt`
     }
     return null
 }
@@ -93,6 +100,19 @@ export function validateParams(params, requirement, data) {
 
     let recipe = lookupRecipe(data, requirement.recipe)
     let machine = data.blueprint_entities[params.machine]
+    let fluids = fluidIngredients(data, recipe)
+    let solidIngredients = recipe.ingredients.filter(i => !fluids.includes(i))
+    // Fluid connections take up rows beside the machine which inserters could use.
+    let ports = fluids.length === 0 ? [] : fluidInputPorts(machine, WEST).slice(0, fluids.length)
+    let freeRows = insertRows(machine.width, new Set(ports.map(p => p.ty))).length
+    for (let key of ["inputInserters"]) {
+        if (params[key] > freeRows) {
+            errors.push(`only ${freeRows} inserter(s) per machine fit beside its ${fluids.length} fluid connection(s)`)
+        }
+    }
+    if (errors.length > 0) {
+        return {errors, warnings, stats}
+    }
     let crafts = machineCrafts(machine, recipe)
     let outPerMachine = recipe.results[0].amount * crafts
     let produced = outPerMachine * params.machines
@@ -113,7 +133,7 @@ export function validateParams(params, requirement, data) {
     // they are.
     let busy = requirement.rate / produced
     stats.busy = busy
-    let perMachine = recipe.ingredients.map(i => i.amount * crafts * busy)
+    let perMachine = solidIngredients.map(i => i.amount * crafts * busy)
     let inPerMachine = perMachine.reduce((a, b) => a + b, 0)
     let outFlow = outPerMachine * busy
     stats.machineInput = inPerMachine
@@ -123,13 +143,21 @@ export function validateParams(params, requirement, data) {
     // keeps to its own lane, so each gets half the belt.
     let perColumn = Math.ceil(params.machines / params.columns)
     let inCap = beltThroughput(data.blueprint_entities[params.inputBelt])
-    let laneCap = recipe.ingredients.length === 2 ? inCap / 2 : inCap
+    let laneCap = solidIngredients.length === 2 ? inCap / 2 : inCap
     stats.inputBeltCapacity = inCap
     stats.inputBeltLoad = perColumn * inPerMachine
-    recipe.ingredients.forEach((ing, i) => {
+    solidIngredients.forEach((ing, i) => {
         let load = perColumn * perMachine[i]
         if (load > laneCap + 1e-9) {
-            errors.push(`input belt (${params.inputBelt}) carries ${laneCap}/s of ${ing.name} (${recipe.ingredients.length === 2 ? "one lane" : "both lanes"}) but a column needs ${load.toFixed(2)}/s; more machines do not reduce this, only a faster belt or two columns do`)
+            errors.push(`input belt (${params.inputBelt}) carries ${laneCap}/s of ${ing.name} (${solidIngredients.length === 2 ? "one lane" : "both lanes"}) but a column needs ${load.toFixed(2)}/s; more machines do not reduce this, only a faster belt or two columns do`)
+        }
+    })
+    // Each fluid has one collector pipe per column.
+    fluids.forEach(fluid => {
+        let load = perColumn * fluid.amount * crafts * busy
+        stats.fluidLoad = Math.max(stats.fluidLoad || 0, load)
+        if (load > PIPE_THROUGHPUT) {
+            errors.push(`${fluid.name} needs ${load.toFixed(0)}/s through one pipe per column, more than about ${PIPE_THROUGHPUT}/s a pipe carries; use two columns or fewer machines`)
         }
     })
     // Inserters drop onto the far lane of a belt only. With one column, all of
@@ -149,7 +177,7 @@ export function validateParams(params, requirement, data) {
     // A machine's flow scales with how busy it is, so more machines each carry
     // less. Say how many it would take with these inserters.
     let machinesFor = (capacity, fullFlow) => Math.ceil(requirement.rate * fullFlow / (capacity * outPerMachine) - 1e-9)
-    let inFull = recipe.ingredients.reduce((sum, i) => sum + i.amount * crafts, 0)
+    let inFull = solidIngredients.reduce((sum, i) => sum + i.amount * crafts, 0)
     if (inIns < inPerMachine) {
         errors.push(`${params.inputInserters} ${params.inputInserter}(s) move about ${inIns.toFixed(2)}/s from a belt, but a machine takes in ${inPerMachine.toFixed(2)}/s; with these inserters at least ${machinesFor(inIns, inFull)} machines would each be busy few enough for them (or use ${params.inputInserters === 1 ? "two inserters, or " : ""}faster inserters)`)
     }
@@ -211,15 +239,96 @@ export function validateLayout(entities, data) {
             takers.set(pick, (takers.get(pick) || 0) + 1)
         }
     }
+    // Only a machine with something to bring on the belt needs an inserter.
+    let needsFeeder = e => {
+        if (!e.recipe) {
+            return true
+        }
+        let recipe = lookupRecipe(data, e.recipe)
+        return fluidIngredients(data, recipe).length < recipe.ingredients.length
+    }
     for (let e of entities) {
         if (!isMachine(e)) {
             continue
         }
-        if (!feeders.has(e)) {
+        if (needsFeeder(e) && !feeders.has(e)) {
             errors.push(`machine at (${e.x},${e.y}) has no inserter feeding it`)
         }
         if (!takers.has(e)) {
             errors.push(`machine at (${e.x},${e.y}) has no inserter emptying it`)
+        }
+    }
+
+    // Fluids: a pipe connects to the tiles its openings face, an underground
+    // pipe also to its partner along the tunnel. Every machine's fluid input
+    // must reach a pipe, with one network per fluid in each column.
+    let isPipe = e => e !== undefined && (typeOf(e) === "pipe" || typeOf(e) === "pipe-to-ground")
+    let openings = e => typeOf(e) === "pipe" ? [NORTH, EAST, SOUTH, WEST] : [e.direction]
+    let parent = new Map()
+    for (let e of entities) {
+        if (isPipe(e)) {
+            parent.set(e, e)
+        }
+    }
+    let find = e => {
+        while (parent.get(e) !== e) {
+            e = parent.get(e)
+        }
+        return e
+    }
+    let join = (a, b) => parent.set(find(a), find(b))
+    for (let e of parent.keys()) {
+        for (let d of openings(e)) {
+            let [dx, dy] = STEP[d]
+            let n = at(e.x + dx, e.y + dy)
+            if (isPipe(n) && openings(n).includes(opposite(d))) {
+                join(e, n)
+            }
+        }
+        if (typeOf(e) === "pipe-to-ground") {
+            let [dx, dy] = STEP[opposite(e.direction)]
+            let reach = entityInfo(data, e.name).max_underground_distance
+            let partner
+            for (let k = 1; k <= reach && !partner; k++) {
+                let n = at(e.x + dx * k, e.y + dy * k)
+                if (n && typeOf(n) === "pipe-to-ground" && n.direction === opposite(e.direction)) {
+                    partner = n
+                }
+            }
+            if (partner) {
+                join(e, partner)
+            } else {
+                errors.push(`${e.name} at (${e.x},${e.y}) has no partner to tunnel to`)
+            }
+        }
+    }
+    let networks = new Map()
+    for (let m of entities) {
+        if (!isMachine(m) || !m.recipe) {
+            continue
+        }
+        let fluids = fluidIngredients(data, lookupRecipe(data, m.recipe))
+        let ports = fluids.length === 0 ? [] : fluidInputPorts(entityInfo(data, m.name), m.direction || NORTH).slice(0, fluids.length)
+        ports.forEach((port, k) => {
+            let n = at(m.x + port.outX, m.y + port.outY)
+            if (!isPipe(n) || !openings(n).includes(opposite(port.facing))) {
+                errors.push(`machine at (${m.x},${m.y}): fluid input ${k + 1} (${fluids[k].name}) is not connected to a pipe`)
+                return
+            }
+            if (!networks.has(m.x)) {
+                networks.set(m.x, [new Set(), new Set()])
+            }
+            networks.get(m.x)[k].add(find(n))
+        })
+    }
+    for (let [x, sets] of networks) {
+        sets.forEach((set, k) => {
+            if (set.size > 1) {
+                errors.push(`fluid ${k + 1} of the machines at x=${x} is split across ${set.size} separate pipe networks`)
+            }
+        })
+        if (sets[0].size === 1 && sets[1].size === 1 && [...sets[0]][0] === [...sets[1]][0]) {
+            errors.push(`the two fluids of the machines at x=${x} share one pipe network`)
         }
     }
 

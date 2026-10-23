@@ -576,6 +576,14 @@ function footprint(proto) {
     return {width: Math.ceil(x2 - x1 - 0.01), height: Math.ceil(y2 - y1 - 0.01)}
 }
 
+// Fluid inputs and outputs of a crafting machine: the tile (relative to its
+// centre, facing north) each connects at, and the way it connects.
+function fluidPorts(proto, production) {
+    return (proto.fluid_boxes || [])
+        .filter(box => box.production_type === production && box.pipe_connections && box.pipe_connections[0])
+        .map(box => ({position: box.pipe_connections[0].position, direction: box.pipe_connections[0].direction}))
+}
+
 const blueprint_entities = {}
 for (let type of ["furnace", "assembling-machine"]) {
     for (let [name, proto] of Object.entries(raw[type])) {
@@ -587,6 +595,8 @@ for (let type of ["furnace", "assembling-machine"]) {
                 crafting_categories: proto.crafting_categories,
                 module_slots: proto.module_slots || 0,
                 energy_usage: energy(proto.energy_usage),
+                fluid_inputs: fluidPorts(proto, "input"),
+                fluid_outputs: fluidPorts(proto, "output"),
             }
         }
     }
@@ -605,6 +615,17 @@ for (let [name, proto] of Object.entries(raw.inserter)) {
         extension_speed: proto.extension_speed,
         stack_size_bonus: proto.stack_size_bonus || 0,
         pickup_distance: Math.abs(proto.pickup_position[1]),
+    }
+}
+for (let [name, proto] of Object.entries(raw.pipe)) {
+    blueprint_entities[name] = {type: "pipe", ...footprint(proto)}
+}
+for (let [name, proto] of Object.entries(raw["pipe-to-ground"])) {
+    let underground = proto.fluid_box.pipe_connections.find(c => c.connection_type === "underground")
+    blueprint_entities[name] = {
+        type: "pipe-to-ground",
+        ...footprint(proto),
+        max_underground_distance: underground.max_underground_distance,
     }
 }
 for (let [name, proto] of Object.entries(raw["electric-pole"])) {

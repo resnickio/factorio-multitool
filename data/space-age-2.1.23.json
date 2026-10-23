@@ -173,6 +173,8 @@
             ],
             "crafting_speed": 0.5,
             "energy_usage": 75000,
+            "fluid_inputs": [],
+            "fluid_outputs": [],
             "height": 3,
             "module_slots": 0,
             "type": "assembling-machine",
@@ -186,6 +188,24 @@
             ],
             "crafting_speed": 0.75,
             "energy_usage": 150000,
+            "fluid_inputs": [
+                {
+                    "direction": 0,
+                    "position": [
+                        0,
+                        -1
+                    ]
+                }
+            ],
+            "fluid_outputs": [
+                {
+                    "direction": 8,
+                    "position": [
+                        0,
+                        1
+                    ]
+                }
+            ],
             "height": 3,
             "module_slots": 2,
             "type": "assembling-machine",
@@ -199,6 +219,24 @@
             ],
             "crafting_speed": 1.25,
             "energy_usage": 375000,
+            "fluid_inputs": [
+                {
+                    "direction": 0,
+                    "position": [
+                        0,
+                        -1
+                    ]
+                }
+            ],
+            "fluid_outputs": [
+                {
+                    "direction": 8,
+                    "position": [
+                        0,
+                        1
+                    ]
+                }
+            ],
             "height": 3,
             "module_slots": 4,
             "type": "assembling-machine",
@@ -226,6 +264,8 @@
             ],
             "crafting_speed": 1,
             "energy_usage": 350000,
+            "fluid_inputs": [],
+            "fluid_outputs": [],
             "height": 3,
             "module_slots": 2,
             "type": "assembling-machine",
@@ -237,6 +277,38 @@
             ],
             "crafting_speed": 1,
             "energy_usage": 210000,
+            "fluid_inputs": [
+                {
+                    "direction": 0,
+                    "position": [
+                        -1,
+                        -1
+                    ]
+                },
+                {
+                    "direction": 0,
+                    "position": [
+                        1,
+                        -1
+                    ]
+                }
+            ],
+            "fluid_outputs": [
+                {
+                    "direction": 8,
+                    "position": [
+                        -1,
+                        1
+                    ]
+                },
+                {
+                    "direction": 8,
+                    "position": [
+                        1,
+                        1
+                    ]
+                }
+            ],
             "height": 3,
             "module_slots": 3,
             "type": "assembling-machine",
@@ -248,6 +320,8 @@
             ],
             "crafting_speed": 1,
             "energy_usage": 540000,
+            "fluid_inputs": [],
+            "fluid_outputs": [],
             "height": 3,
             "module_slots": 2,
             "type": "assembling-machine",
@@ -259,6 +333,52 @@
             ],
             "crafting_speed": 2,
             "energy_usage": 1500000,
+            "fluid_inputs": [
+                {
+                    "direction": 8,
+                    "position": [
+                        -2,
+                        2
+                    ]
+                },
+                {
+                    "direction": 8,
+                    "position": [
+                        0,
+                        2
+                    ]
+                },
+                {
+                    "direction": 8,
+                    "position": [
+                        2,
+                        2
+                    ]
+                }
+            ],
+            "fluid_outputs": [
+                {
+                    "direction": 0,
+                    "position": [
+                        -2,
+                        -2
+                    ]
+                },
+                {
+                    "direction": 0,
+                    "position": [
+                        0,
+                        -2
+                    ]
+                },
+                {
+                    "direction": 0,
+                    "position": [
+                        2,
+                        -2
+                    ]
+                }
+            ],
             "height": 5,
             "module_slots": 8,
             "type": "assembling-machine",
@@ -270,6 +390,8 @@
             ],
             "crafting_speed": 2,
             "energy_usage": 180000,
+            "fluid_inputs": [],
+            "fluid_outputs": [],
             "height": 3,
             "module_slots": 2,
             "type": "furnace",
@@ -281,6 +403,38 @@
             ],
             "crafting_speed": 2,
             "energy_usage": 2000000,
+            "fluid_inputs": [
+                {
+                    "direction": 12,
+                    "position": [
+                        -1.5,
+                        0.5
+                    ]
+                },
+                {
+                    "direction": 4,
+                    "position": [
+                        1.5,
+                        -0.5
+                    ]
+                }
+            ],
+            "fluid_outputs": [
+                {
+                    "direction": 8,
+                    "position": [
+                        0.5,
+                        1.5
+                    ]
+                },
+                {
+                    "direction": 0,
+                    "position": [
+                        -0.5,
+                        -1.5
+                    ]
+                }
+            ],
             "height": 4,
             "module_slots": 5,
             "type": "assembling-machine",
@@ -313,6 +467,38 @@
             ],
             "crafting_speed": 4,
             "energy_usage": 2500000,
+            "fluid_inputs": [
+                {
+                    "direction": 8,
+                    "position": [
+                        -1,
+                        2
+                    ]
+                },
+                {
+                    "direction": 8,
+                    "position": [
+                        1,
+                        2
+                    ]
+                }
+            ],
+            "fluid_outputs": [
+                {
+                    "direction": 0,
+                    "position": [
+                        -1,
+                        -2
+                    ]
+                },
+                {
+                    "direction": 0,
+                    "position": [
+                        1,
+                        -2
+                    ]
+                }
+            ],
             "height": 5,
             "module_slots": 4,
             "type": "assembling-machine",
@@ -349,10 +535,60 @@
             ],
             "crafting_speed": 1,
             "energy_usage": 420000,
+            "fluid_inputs": [
+                {
+                    "direction": 8,
+                    "position": [
+                        -1,
+                        2
+                    ]
+                },
+                {
+                    "direction": 8,
+                    "position": [
+                        1,
+                        2
+                    ]
+                }
+            ],
+            "fluid_outputs": [
+                {
+                    "direction": 0,
+                    "position": [
+                        -2,
+                        -2
+                    ]
+                },
+                {
+                    "direction": 0,
+                    "position": [
+                        0,
+                        -2
+                    ]
+                },
+                {
+                    "direction": 0,
+                    "position": [
+                        2,
+                        -2
+                    ]
+                }
+            ],
             "height": 5,
             "module_slots": 3,
             "type": "assembling-machine",
             "width": 5
+        },
+        "pipe": {
+            "height": 1,
+            "type": "pipe",
+            "width": 1
+        },
+        "pipe-to-ground": {
+            "height": 1,
+            "max_underground_distance": 10,
+            "type": "pipe-to-ground",
+            "width": 1
         },
         "recycler": {
             "crafting_categories": [
@@ -360,6 +596,8 @@
             ],
             "crafting_speed": 0.5,
             "energy_usage": 180000,
+            "fluid_inputs": [],
+            "fluid_outputs": [],
             "height": 4,
             "module_slots": 4,
             "type": "furnace",
