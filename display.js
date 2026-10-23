@@ -705,14 +705,14 @@ export function displayItems(spec, totals) {
     let fuelRow = buildingRow.filter(d => d.building.fuel !== null)
     let fuelIcon = fuelRow.selectAll(".fuel-icon")
     fuelIcon.selectAll("*").remove()
-    fuelIcon.append(d => spec.fuel.icon.make(32))
+    fuelIcon.append(d => (spec.getFuelFor(d.building.fuel) || spec.fuel).icon.make(32))
     fuelIcon.append("span")
         .text(" \u00d7 ")
     fuelRow.selectAll("tt.power")
         .text(d => {
             let rate = totals.rates.get(d.recipe)
             let {fuel, power} = spec.getPowerUsage(d.recipe, rate)
-            return `${spec.format.alignRate(power.div(spec.fuel.value))}/${spec.format.rateName}`
+            return `${spec.format.alignRate(power.div((spec.getFuelFor(d.building.fuel) || spec.fuel).value))}/${spec.format.rateName}`
         })
     let electricRow = buildingRow.filter(d => d.building.fuel === null)
     let totalPower = zero

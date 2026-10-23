@@ -67,7 +67,11 @@ class Recipe {
     }
     fuelIngredient() {
         let building = spec.getBuilding(this)
-        if (building === null || building.fuel === null || building.fuel !== "chemical") {
+        if (building === null || building.fuel === null) {
+            return []
+        }
+        let fuel = spec.getFuelFor(building.fuel)
+        if (fuel === null) {
             return []
         }
         // baseRate = craft/s
@@ -78,8 +82,8 @@ class Recipe {
         let baseRate = spec.getRecipeRate(this)
         let basePower = spec.getPowerUsage(this, baseRate).power
         let perCraftEnergy = basePower.div(baseRate)
-        let fuelAmount = perCraftEnergy.div(spec.fuel.value)
-        return [new Ingredient(spec.fuel.item, fuelAmount)]
+        let fuelAmount = perCraftEnergy.div(fuel.value)
+        return [new Ingredient(fuel.item, fuelAmount)]
     }
     getIngredients() {
         return this.ingredients.concat(this.fuelIngredient())

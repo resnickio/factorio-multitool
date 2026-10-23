@@ -17,7 +17,7 @@ import { getTechnologies } from "./technology.js"
 import { resetDisplay } from "./display.js"
 import { spec, resetSpec } from "./factory.js"
 import { formatSettings, loadSettings } from "./fragment.js"
-import { getFuel } from "./fuel.js"
+import { getFuel, getFuelCategories } from "./fuel.js"
 import { getItemGroups } from "./group.js"
 import { getSprites } from "./icon.js"
 import { getItems } from "./item.js"
@@ -97,10 +97,11 @@ function loadData(modName, settings) {
         let modules = getModules(data, items)
         let buildings = getBuildings(data, items)
         let belts = getBelts(data)
-        let fuel = getFuel(data, items)
+        let fuelCategories = getFuelCategories(data, items)
+        let fuel = getFuel(fuelCategories)
         getSprites(data)
         let itemGroups = getItemGroups(items, data)
-        spec.setData(items, recipes, planets, technologies, modules, buildings, belts, fuel, itemGroups)
+        spec.setData(items, recipes, planets, technologies, modules, buildings, belts, fuel, fuelCategories, itemGroups)
 
         fixLegacySettings(settings)
         renderSettings(settings)

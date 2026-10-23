@@ -187,7 +187,7 @@ class FactorySpecification {
 
         this.debug = false
     }
-    setData(items, recipes, planets, technologies, modules, buildings, belts, fuels, itemGroups) {
+    setData(items, recipes, planets, technologies, modules, buildings, belts, fuels, fuelCategories, itemGroups) {
         this.items = items
         this.recipes = recipes
         this.planets = planets
@@ -201,6 +201,7 @@ class FactorySpecification {
         this.belts = belts
         this.belt = belts.get(DEFAULT_BELT)
         this.fuels = fuels
+        this.fuelCategories = fuelCategories
         this.fuel = fuels.get(DEFAULT_FUEL)
         this.miningProd = zero
         this.itemGroups = itemGroups
@@ -672,6 +673,19 @@ class FactorySpecification {
     }
     getBeltCount(rate) {
         return rate.div(this.belt.rate)
+    }
+    // Returns the Fuel which buildings burning the given fuel category use. The
+    // user chooses between chemical fuels; other categories (such as the
+    // biochamber's nutrients) are used as they come.
+    getFuelFor(category) {
+        if (category === "chemical") {
+            return this.fuel
+        }
+        let fuels = this.fuelCategories.get(category)
+        if (fuels === undefined || fuels.length === 0) {
+            return null
+        }
+        return fuels[0]
     }
     getPowerUsage(recipe, rate) {
         let building = this.getBuilding(recipe)
