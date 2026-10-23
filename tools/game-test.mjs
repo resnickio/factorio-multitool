@@ -5,6 +5,11 @@
 //   node tools/game-test.mjs [--sample iron-4-furnaces] [--port 34299]
 //        [--game-dir D:/SteamLibrary/steamapps/common/Factorio]
 //        [--work-dir DIR] [--seconds 60] [--warmup 90]
+//        [--model qwen3.8:latest]
+//
+// With --model, the layout is chosen by that local Ollama model (as in the
+// Blueprint tab) instead of by the built-in defaults, and the blueprint made
+// from its answer is what gets built.
 //
 // The server runs from its own data directory, so it does not touch your
 // saves or configuration, and can run beside the game. It keeps running after
@@ -14,8 +19,11 @@
 import fs from "node:fs"
 import path from "node:path"
 import { spawn } from "node:child_process"
+import zlib from "node:zlib"
 import { fileURLToPath } from "node:url"
 import { defaultParams } from "../blueprint/dsl.js"
+import { askForLayout } from "../blueprint/llm.js"
+import { encodeBlueprint } from "../blueprint/codec.js"
 import { SAMPLES, DEFAULT_MACHINE } from "./samples.mjs"
 
 const args = {}
@@ -37,11 +45,33 @@ if (!sample) {
 }
 const data = JSON.parse(fs.readFileSync(path.join(here, "../data/space-age-2.1.23.json"), "utf8"))
 const machine = sample.machine || DEFAULT_MACHINE
-const params = {...defaultParams({recipe: sample.recipe, rate: sample.rate}, machine, data), ...sample.override}
 const recipe = data.recipes.find(r => r.key === sample.recipe)
 const inputs = recipe.ingredients.map(i => i.name)
 const outputItem = recipe.results[0].name
-const blueprint = fs.readFileSync(path.join(here, "samples", SAMPLE + ".txt"), "utf8").trim()
+let params, blueprint
+if (args.model) {
+    let requirement = {recipe: sample.recipe, rate: sample.rate}
+    let result = await askForLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machine, data})
+    console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
+    if (!result.ok) {
+        console.log(result.errors.join("\n"))
+        process.exit(1)
+    }
+    params = result.params
+    console.log("model's layout:", JSON.stringify({...params, notes: undefined}))
+    if (params.notes) {
+        console.log("model's notes:", params.notes)
+    }
+    let deflate = bytes => new Uint8Array(zlib.deflateSync(bytes, {level: 9}))
+    blueprint = encodeBlueprint(result.blueprint, deflate)
+    fs.mkdirSync(path.join(here, "samples", "model"), {recursive: true})
+    fs.writeFileSync(path.join(here, "samples", "model", SAMPLE + ".txt"), blueprint + "\n")
+} else {
+    params = {...defaultParams({recipe: sample.recipe, rate: sample.rate}, machine, data), ...sample.override}
+    blueprint = fs.readFileSync(path.join(here, "samples", SAMPLE + ".txt"), "utf8").trim()
+}
+// Tiles of room below the column, for the test area.
+const ROWS = Math.ceil(params.machines / params.columns) * data.blueprint_entities[params.machine].width
 
 // Lay out the data directory.
 fs.rmSync(WORK, {recursive: true, force: true})
@@ -98,13 +128,13 @@ local function setup()
   local surface = game.surfaces[1]
   surface.request_to_generate_chunks({15, 40}, 4)
   surface.force_generate_chunk_requests()
-  local area = {{-10, -20}, {60, 100}}
+  local area = {{-10, -20}, {60, ${ROWS + 60}}}
   for _, e in pairs(surface.find_entities(area)) do
     if e.type ~= "character" then e.destroy() end
   end
   local tiles = {}
   for x = -10, 60 do
-    for y = -20, 100 do
+    for y = -20, ${ROWS + 60} do
       tiles[#tiles + 1] = {name = "concrete", position = {x, y}}
     end
   end
