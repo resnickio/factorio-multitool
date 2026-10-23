@@ -277,6 +277,91 @@ function applyTechFilter() {
     })
 }
 
+// Run in the game's console (it disables achievements for that save). It
+// writes the names of the researched technologies to
+// script-output/researched-techs.txt.
+const EXPORT_COMMAND = '/c local t = {} for n, tech in pairs(game.forces.player.technologies) do if tech.researched then t[#t + 1] = n end end helpers.write_file("researched-techs.txt", table.concat(t, ","), false)'
+
+let importText = ""
+let importMessage = ""
+
+// Parses a list of technology keys, separated by commas, whitespace or JSON
+// punctuation. Returns the Set of known technologies and the unknown names.
+function parseTechList(text) {
+    let known = new Set()
+    let unknown = []
+    for (let name of text.split(/[\s,;"'\[\]{}]+/)) {
+        if (name === "") {
+            continue
+        }
+        let tech = spec.technologies.get(name)
+        if (tech) {
+            known.add(tech)
+        } else {
+            unknown.push(name)
+        }
+    }
+    return {known, unknown}
+}
+
+function importResearch() {
+    let {known, unknown} = parseTechList(importText)
+    if (known.size === 0) {
+        importMessage = "No technologies found. Paste the contents of researched-techs.txt."
+        renderResearch()
+        return
+    }
+    let closed = researchClosure(known)
+    // Most of the unknown names are technologies which unlock no recipes, such
+    // as upgrades; they cannot affect the calculation.
+    importMessage = `Imported ${known.size} technologies (${closed.size} counting prerequisites). ${unknown.length} others were ignored (mostly upgrades which unlock no recipes).`
+    importText = ""
+    setResearch(closed)
+}
+
+function renderImport(root) {
+    let details = root.append("details")
+        .classed("research-import", true)
+        .property("open", importMessage !== "")
+    details.append("summary")
+        .text("Import from my game")
+    let body = details.append("div")
+    body.append("div")
+        .text("In your game, open the console (the ~ key) and run this command. It writes the researched technologies to script-output/researched-techs.txt in your Factorio user data folder. Then paste the file's contents below.")
+    let command = body.append("input")
+        .attr("type", "text")
+        .attr("readonly", true)
+        .classed("command-input", true)
+        .property("value", EXPORT_COMMAND)
+        .on("focus", function() {
+            this.select()
+        })
+    body.append("button")
+        .text("Copy command")
+        .on("click", function() {
+            command.node().select()
+            if (navigator.clipboard) {
+                navigator.clipboard.writeText(EXPORT_COMMAND)
+            } else {
+                document.execCommand("copy")
+            }
+        })
+    body.append("textarea")
+        .attr("rows", 3)
+        .attr("placeholder", "Paste researched technologies here")
+        .classed("import-text", true)
+        .property("value", importText)
+        .on("input", function() {
+            importText = this.value
+        })
+    body.append("button")
+        .text("Import")
+        .on("click", importResearch)
+    body.append("div")
+        .classed("hint", true)
+        .text(importMessage)
+}
+
 export function renderResearch() {
     let row = d3.select("#research_setting_row")
     if (!spec.technologies) {
@@ -317,6 +402,7 @@ export function renderResearch() {
         label.append("span")
             .text(" " + text)
     }
+    renderImport(root)
     if (!limited) {
         return
     }

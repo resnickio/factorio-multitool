@@ -508,3 +508,20 @@ svg.popout {
 #research_ui, #recipe_toggles {
     max-width: calc(100vw - 12em);
 }
+.research-import {
+    margin: 0.5em 2px;
+}
+.research-import .command-input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    font-family: monospace;
+    font-size: 0.8em;
+    margin: 0.3em 0;
+}
+.research-import .import-text {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0.3em 0;
+}
