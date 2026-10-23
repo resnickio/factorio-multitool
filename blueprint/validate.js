@@ -129,7 +129,7 @@ export function validateParams(params, requirement, data) {
     recipe.ingredients.forEach((ing, i) => {
         let load = perColumn * perMachine[i]
         if (load > laneCap + 1e-9) {
-            errors.push(`input belt (${params.inputBelt}) carries ${laneCap}/s of ${ing.name} (${recipe.ingredients.length === 2 ? "one lane" : "both lanes"}) but a column needs ${load.toFixed(2)}/s`)
+            errors.push(`input belt (${params.inputBelt}) carries ${laneCap}/s of ${ing.name} (${recipe.ingredients.length === 2 ? "one lane" : "both lanes"}) but a column needs ${load.toFixed(2)}/s; more machines do not reduce this, only a faster belt or two columns do`)
         }
     })
     // Inserters drop onto the far lane of a belt only. With one column, all of
@@ -146,11 +146,15 @@ export function validateParams(params, requirement, data) {
     let outIns = inserterThroughput(data.blueprint_entities[params.outputInserter], false) * params.outputInserters
     stats.inputInserterRate = inIns
     stats.outputInserterRate = outIns
+    // A machine's flow scales with how busy it is, so more machines each carry
+    // less. Say how many it would take with these inserters.
+    let machinesFor = (capacity, fullFlow) => Math.ceil(requirement.rate * fullFlow / (capacity * outPerMachine) - 1e-9)
+    let inFull = recipe.ingredients.reduce((sum, i) => sum + i.amount * crafts, 0)
     if (inIns < inPerMachine) {
-        errors.push(`${params.inputInserters} ${params.inputInserter}(s) move about ${inIns.toFixed(2)}/s from a belt, but a machine takes in ${inPerMachine.toFixed(2)}/s`)
+        errors.push(`${params.inputInserters} ${params.inputInserter}(s) move about ${inIns.toFixed(2)}/s from a belt, but a machine takes in ${inPerMachine.toFixed(2)}/s; with these inserters at least ${machinesFor(inIns, inFull)} machines would each be busy few enough for them (or use ${params.inputInserters === 1 ? "two inserters, or " : ""}faster inserters)`)
     }
     if (outIns < outFlow) {
-        errors.push(`${params.outputInserters} ${params.outputInserter}(s) move about ${outIns.toFixed(2)}/s, but a machine puts out ${outFlow.toFixed(2)}/s`)
+        errors.push(`${params.outputInserters} ${params.outputInserter}(s) move about ${outIns.toFixed(2)}/s, but a machine puts out ${outFlow.toFixed(2)}/s; with these inserters at least ${machinesFor(outIns, outPerMachine)} machines would be enough (or use ${params.outputInserters === 1 ? "two inserters, or " : ""}faster inserters)`)
     }
     return {errors, warnings, stats}
 }

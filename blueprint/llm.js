@@ -1,12 +1,26 @@
-// Asks the model for a layout, and feeds the validator's complaints back to it
+// Asks a model for a layout, and feeds the validator's complaints back to it
 // until the layout is accepted or the attempts run out.
+//
+// Two providers are supported: the Anthropic API (with a key), and a local
+// Ollama server.
 
 import { describeTask, SYSTEM_PROMPT, parseReply, buildColumnBlueprint } from "./dsl.js"
 
-const API_URL = "https://api.anthropic.com/v1/messages"
+const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
+export const OLLAMA_URL = "http://localhost:11434"
 
-async function callModel({apiKey, model, messages, fetchFn}) {
-    let response = await fetchFn(API_URL, {
+async function failure(response, extract) {
+    let detail
+    try {
+        detail = extract(await response.json())
+    } catch (e) {
+        detail = response.statusText
+    }
+    return new Error(`API request failed (${response.status}): ${detail}`)
+}
+
+async function callAnthropic({apiKey, model, messages, fetchFn}) {
+    let response = await fetchFn(ANTHROPIC_URL, {
         method: "POST",
         headers: {
             "content-type": "application/json",
@@ -18,27 +32,50 @@ async function callModel({apiKey, model, messages, fetchFn}) {
         body: JSON.stringify({model, max_tokens: 1024, system: SYSTEM_PROMPT, messages}),
     })
     if (!response.ok) {
-        let detail = ""
-        try {
-            detail = (await response.json()).error.message
-        } catch (e) {
-            detail = response.statusText
-        }
-        throw new Error(`API request failed (${response.status}): ${detail}`)
+        throw await failure(response, body => body.error.message)
     }
     let body = await response.json()
     return body.content.filter(part => part.type === "text").map(part => part.text).join("")
 }
 
+async function callOllama({baseUrl, model, messages, fetchFn, think}) {
+    let response = await fetchFn(`${baseUrl}/api/chat`, {
+        method: "POST",
+        headers: {"content-type": "application/json"},
+        body: JSON.stringify({
+            model,
+            messages: [{role: "system", content: SYSTEM_PROMPT}, ...messages],
+            stream: false,
+            // Without thinking, models answer in seconds instead of minutes.
+            think,
+            // Constrains the reply to a JSON object.
+            format: "json",
+            options: {temperature: 0.2, num_predict: 2048},
+        }),
+    })
+    if (!response.ok) {
+        throw await failure(response, body => body.error)
+    }
+    let body = await response.json()
+    return body.message.content
+}
+
+// provider: "anthropic" (needs apiKey) or "ollama" (optional baseUrl, think).
 // Returns the result of buildColumnBlueprint for the model's last attempt,
 // plus {params, attempts, log}. The log lists what was said at each step.
-export async function askForLayout({apiKey, model, requirement, machine, data, maxAttempts = 3, fetchFn = fetch}) {
+export async function askForLayout({
+    provider = "anthropic", apiKey, baseUrl = OLLAMA_URL, think = false,
+    model, requirement, machine, data, maxAttempts = 3, fetchFn = fetch,
+}) {
+    let call = provider === "ollama"
+        ? messages => callOllama({baseUrl, model, messages, fetchFn, think})
+        : messages => callAnthropic({apiKey, model, messages, fetchFn})
     let task = describeTask(requirement, machine, data)
     let messages = [{role: "user", content: JSON.stringify(task)}]
     let log = []
     let last = null
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        let text = await callModel({apiKey, model, messages, fetchFn})
+        let text = await call(messages)
         log.push({attempt, reply: text})
         let params
         try {

@@ -2,19 +2,21 @@ import { spec } from "./factory.js"
 import { encodeBlueprint } from "./blueprint/codec.js"
 import { defaultParams, buildColumnBlueprint, ineligibleReason } from "./blueprint/dsl.js"
 import { previewLayout } from "./blueprint/build.js"
-import { askForLayout } from "./blueprint/llm.js"
+import { askForLayout, OLLAMA_URL } from "./blueprint/llm.js"
 import { entityInfo, lookupRecipe, machineCrafts } from "./blueprint/entities.js"
 
 // The Blueprint tab: turns the furnace and assembler rows in the current
 // solution into blueprint strings for the game.
 
-const DEFAULT_MODEL = "claude-sonnet-5-5"
+const DEFAULT_MODELS = {anthropic: "claude-sonnet-5-5", ollama: "qwen3.8:latest"}
 
 let selected = null
-let useModel = false
+// "none" (build with the cheapest parts which work), "anthropic" or "ollama".
+let provider = "none"
 // The key is kept only in this page, and never stored or put in the link.
 let apiKey = ""
-let model = DEFAULT_MODEL
+let models = {...DEFAULT_MODELS}
+let ollamaUrl = OLLAMA_URL
 let output = null
 let busy = false
 
@@ -72,11 +74,14 @@ async function generate(req) {
     let requirement = {recipe: req.recipe.key, rate: req.rate}
     let machine = req.building.key
     try {
-        if (useModel) {
+        if (provider === "anthropic") {
             if (apiKey === "") {
-                throw new Error("Enter an API key, or choose to build without Claude.")
+                throw new Error("Enter an API key, or choose another way to build.")
             }
-            output = await askForLayout({apiKey, model, requirement, machine, data: spec.data})
+            output = await askForLayout({provider, apiKey, model: models.anthropic, requirement, machine, data: spec.data})
+        } else if (provider === "ollama") {
+            // A local model costs nothing to ask again, so give it more tries.
+            output = await askForLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machine, data: spec.data})
         } else {
             let params = defaultParams(requirement, machine, spec.data)
             output = {...buildColumnBlueprint(params, requirement, spec.data), params, attempts: 0, log: []}
@@ -100,7 +105,7 @@ function renderResult(root) {
         .classed("blueprint-result", true)
     if (output.pending) {
         box.append("div")
-            .text(useModel ? "Asking Claude for a layout..." : "Building...")
+            .text(provider === "anthropic" ? "Asking Claude for a layout..." : provider === "ollama" ? "Asking the local model for a layout..." : "Building...")
         return
     }
     if (output.failed) {
@@ -178,7 +183,7 @@ function renderLog(box) {
     }
     let details = box.append("details")
     details.append("summary")
-        .text("What Claude said")
+        .text("What the model said")
     for (let entry of output.log) {
         details.append("pre")
             .classed("blueprint-log", true)
@@ -242,40 +247,58 @@ export function renderBlueprint() {
     panel.append("h3")
         .text(`Blueprint for ${req.recipe.name}`)
     let modes = panel.append("div")
-    for (let [value, text] of [[false, "Build without Claude (cheapest parts that carry the load)"], [true, "Ask Claude to choose the parts"]]) {
+    let choices = [
+        ["none", "Build without a model (cheapest parts that carry the load)"],
+        ["ollama", "Ask a local model (Ollama) to choose the parts"],
+        ["anthropic", "Ask Claude to choose the parts (needs an API key)"],
+    ]
+    for (let [value, text] of choices) {
         let label = modes.append("label")
             .style("display", "block")
         label.append("input")
             .attr("type", "radio")
             .attr("name", "blueprint_mode")
-            .property("checked", useModel === value)
+            .property("checked", provider === value)
             .on("change", () => {
-                useModel = value
+                provider = value
                 renderBlueprint()
             })
         label.append("span")
             .text(" " + text)
     }
-    if (useModel) {
+    if (provider !== "none") {
         let box = panel.append("div")
             .classed("blueprint-api", true)
-        box.append("div")
-            .classed("hint", true)
-            .text("Your key stays in this page. The request goes directly from your browser to api.anthropic.com and contains the factory's numbers; nothing is saved.")
-        box.append("input")
-            .attr("type", "password")
-            .attr("placeholder", "Anthropic API key")
-            .attr("autocomplete", "off")
-            .property("value", apiKey)
-            .on("input", function() {
-                apiKey = this.value
-            })
+        if (provider === "anthropic") {
+            box.append("div")
+                .classed("hint", true)
+                .text("Your key stays in this page. The request goes directly from your browser to api.anthropic.com and contains the factory's numbers; nothing is saved.")
+            box.append("input")
+                .attr("type", "password")
+                .attr("placeholder", "Anthropic API key")
+                .attr("autocomplete", "off")
+                .property("value", apiKey)
+                .on("input", function() {
+                    apiKey = this.value
+                })
+        } else {
+            box.append("div")
+                .classed("hint", true)
+                .text("The request goes to your own Ollama server and contains the factory's numbers; nothing leaves your machine. If the browser is blocked from reaching it, start Ollama with OLLAMA_ORIGINS set to include this page's address.")
+            box.append("input")
+                .attr("type", "text")
+                .attr("placeholder", "Ollama address")
+                .property("value", ollamaUrl)
+                .on("input", function() {
+                    ollamaUrl = this.value
+                })
+        }
         box.append("input")
             .attr("type", "text")
             .attr("placeholder", "Model")
-            .property("value", model)
+            .property("value", models[provider])
             .on("input", function() {
-                model = this.value
+                models[provider] = this.value
             })
     }
     panel.append("button")

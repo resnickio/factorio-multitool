@@ -263,6 +263,29 @@ await test("the model loop works for an assembler recipe", async () => {
     assert.equal(r.attempts, 1)
 })
 
+await test("the Ollama provider sends a chat request with the system prompt and JSON format", async () => {
+    let good = params(iron)
+    let seen = []
+    let fetchFn = async (url, init) => {
+        seen.push({url, body: JSON.parse(init.body)})
+        return {ok: true, json: async () => ({message: {role: "assistant", content: replyFor(good)}})}
+    }
+    let r = await askForLayout({provider: "ollama", baseUrl: "http://example:1234", model: "qwen3.8:latest", requirement: iron, machine: F, data, fetchFn})
+    assert.ok(r.ok, r.errors.join("; "))
+    assert.equal(seen[0].url, "http://example:1234/api/chat")
+    assert.equal(seen[0].body.model, "qwen3.8:latest")
+    assert.equal(seen[0].body.stream, false)
+    assert.equal(seen[0].body.think, false)
+    assert.equal(seen[0].body.format, "json")
+    assert.equal(seen[0].body.messages[0].role, "system")
+    assert.equal(seen[0].body.messages[1].role, "user")
+})
+
+await test("an Ollama error is reported", async () => {
+    let fetchFn = async () => ({ok: false, status: 404, statusText: "Not Found", json: async () => ({error: "model 'nope' not found"})})
+    await assert.rejects(askForLayout({provider: "ollama", model: "nope", requirement: iron, machine: F, data, fetchFn}), /404.*not found/)
+})
+
 await test("the model loop gives up and reports errors", async () => {
     let fetchFn = async () => ({ok: true, json: async () => ({content: [{type: "text", text: "I cannot"}]})})
     let r = await askForLayout({apiKey: "k", model: "m", requirement: iron, machine: F, data, fetchFn, maxAttempts: 2})
