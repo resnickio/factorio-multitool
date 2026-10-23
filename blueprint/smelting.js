@@ -59,9 +59,10 @@ export function placeSmeltingColumns(params, data) {
         for (let i = 0; i < counts[c]; i++) {
             let y = i * size
             add(params.furnace, left ? x.furnace1 : x.furnace2, y, NORTH)
-            // Inserters point in the direction items are dropped.
-            add(params.inputInserter, left ? x.ins1 : x.ins2, y + mid, left ? EAST : WEST)
-            add(params.outputInserter, left ? x.out1 : x.out2, y + mid, left ? EAST : WEST)
+            // In a blueprint an inserter's direction points at the tile it
+            // picks up from (checked against the game).
+            add(params.inputInserter, left ? x.ins1 : x.ins2, y + mid, left ? WEST : EAST)
+            add(params.outputInserter, left ? x.out1 : x.out2, y + mid, left ? WEST : EAST)
         }
     }
 

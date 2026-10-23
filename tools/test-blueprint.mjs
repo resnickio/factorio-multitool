@@ -55,11 +55,20 @@ await test("default layout for 15 iron plates/s is accepted", () => {
 })
 
 await test("a faster belt is preferred to a second column while one will do", () => {
-    let want = {recipe: "iron-plate", rate: 40}
+    let want = {recipe: "iron-plate", rate: 25}
     let params = defaultParams(want, "electric-furnace", data)
     assert.equal(params.columns, 1)
-    assert.equal(params.inputBelt, "express-transport-belt")
+    // The output sits on one lane, so it needs a belt of twice the rate (50/s).
+    assert.equal(params.outputBelt, "turbo-transport-belt")
     assert.deepEqual(buildSmeltingBlueprint(params, want, data).errors, [])
+})
+
+await test("one column puts all output on one lane", () => {
+    let p = {...defaultParams(iron, "electric-furnace", data), columns: 1, outputBelt: "transport-belt"}
+    let v = validateParams(p, iron, data)
+    assert.ok(v.errors.some(e => /one lane/.test(e)), v.errors.join("; "))
+    let two = validateParams({...p, columns: 2}, iron, data)
+    assert.ok(!two.errors.some(e => /output belt/.test(e)), two.errors.join("; "))
 })
 
 await test("a steel demand too big for one input belt uses two columns", () => {
@@ -71,7 +80,7 @@ await test("a steel demand too big for one input belt uses two columns", () => {
 })
 
 await test("more than one output belt can carry is reported, not built", () => {
-    let want = {recipe: "iron-plate", rate: 70}
+    let want = {recipe: "iron-plate", rate: 130}
     let r = buildSmeltingBlueprint(defaultParams(want, "electric-furnace", data), want, data)
     assert.equal(r.ok, false)
     assert.ok(r.errors.some(e => /output belt/.test(e)), r.errors.join("; "))
@@ -129,7 +138,7 @@ await test("layout validator catches a reversed inserter and an overlap", () => 
     let placed = placeSmeltingColumns(params, data)
     let flipped = placed.entities.map(e => ({...e}))
     let ins = flipped.find(e => e.name === params.inputInserter)
-    ins.direction = WEST
+    ins.direction = EAST
     let v = validateLayout(flipped, data)
     assert.ok(v.errors.some(e => /no inserter feeding/.test(e)), v.errors.join("; "))
     let overlapped = placed.entities.concat([{...placed.entities[0]}])
@@ -155,6 +164,21 @@ await test("exported blueprint decodes to the same entities", () => {
     // A 3x3 furnace sits on a half-tile centre.
     assert.equal(furnace.position.x % 1, 0.5)
     assert.equal(back.icons[0].signal.name, "electric-furnace")
+})
+
+await test("poles are wired into one network", () => {
+    for (let want of [{recipe: "iron-plate", rate: 15}, {recipe: "steel-plate", rate: 15}]) {
+        let r = buildSmeltingBlueprint(defaultParams(want, "electric-furnace", data), want, data)
+        let poles = r.blueprint.entities.filter(e => /pole/.test(e.name)).length
+        let wires = r.blueprint.wires
+        assert.equal(wires.length, poles - 1)
+        let names = new Map(r.blueprint.entities.map(e => [e.entity_number, e.name]))
+        for (let [a, ca, b, cb] of wires) {
+            assert.ok(/pole/.test(names.get(a)) && /pole/.test(names.get(b)))
+            assert.equal(ca, 5)
+            assert.equal(cb, 5)
+        }
+    }
 })
 
 await test("parseReply reads fenced JSON", () => {

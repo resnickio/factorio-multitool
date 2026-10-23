@@ -4,17 +4,16 @@ import fs from "node:fs"
 import zlib from "node:zlib"
 import { encodeBlueprint } from "../blueprint/codec.js"
 import { defaultParams, buildSmeltingBlueprint } from "../blueprint/dsl.js"
+import { SAMPLES } from "./samples.mjs"
 
 const data = JSON.parse(fs.readFileSync(new URL("../data/space-age-2.1.23.json", import.meta.url), "utf8"))
 const deflate = bytes => new Uint8Array(zlib.deflateSync(bytes, {level: 9}))
 fs.mkdirSync(new URL("./samples/", import.meta.url), {recursive: true})
 
-for (let [name, requirement] of [
-    ["iron-4-furnaces", {recipe: "iron-plate", rate: 2.5}],
-    ["iron-24-furnaces", {recipe: "iron-plate", rate: 15}],
-    ["steel-two-columns", {recipe: "steel-plate", rate: 15}],
-]) {
-    let result = buildSmeltingBlueprint(defaultParams(requirement, "electric-furnace", data), requirement, data)
+for (let [name, sample] of Object.entries(SAMPLES)) {
+    let requirement = {recipe: sample.recipe, rate: sample.rate}
+    let params = {...defaultParams(requirement, "electric-furnace", data), ...sample.override}
+    let result = buildSmeltingBlueprint(params, requirement, data)
     if (!result.ok) {
         throw new Error(name + ": " + result.errors.join("; "))
     }

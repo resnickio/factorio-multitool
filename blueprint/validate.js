@@ -71,7 +71,9 @@ export function validateParams(params, requirement, data) {
     let perColumn = Math.ceil(params.furnaces / params.columns)
     let inRate = perColumn * inPerFurnace
     let inCap = beltThroughput(data.blueprint_entities[params.inputBelt])
-    let outCap = beltThroughput(data.blueprint_entities[params.outputBelt])
+    // Inserters drop onto the far lane of a belt only. With one column, all of
+    // them are on the same side, so the output belt carries half its rate.
+    let outCap = beltThroughput(data.blueprint_entities[params.outputBelt]) * (params.columns === 1 ? 0.5 : 1)
     stats.inputBeltLoad = inRate
     stats.inputBeltCapacity = inCap
     stats.outputBeltLoad = produced
@@ -80,7 +82,7 @@ export function validateParams(params, requirement, data) {
         errors.push(`input belt (${params.inputBelt}) carries ${inCap}/s but a column needs ${inRate.toFixed(2)}/s`)
     }
     if (produced > outCap + 1e-9) {
-        errors.push(`output belt (${params.outputBelt}) carries ${outCap}/s but ${produced.toFixed(2)}/s is produced`)
+        errors.push(`output belt (${params.outputBelt}) carries ${outCap}/s here (${params.columns === 1 ? "one lane, since all the output inserters are on one side" : "both lanes"}) but ${produced.toFixed(2)}/s is produced`)
     }
 
     // Inserters.
@@ -118,8 +120,8 @@ export function validateLayout(entities, data) {
         }
     }
 
-    // Inserters pick up from, and drop onto, the tiles on either side. Every
-    // furnace needs one feeding it and one emptying it.
+    // Inserters pick up from the tile their direction points at, and drop onto
+    // the opposite one. Every furnace needs one feeding it and one emptying it.
     let feeders = new Map()
     let takers = new Map()
     let at = (tx, ty) => tiles.get(`${tx},${ty}`)
@@ -129,8 +131,8 @@ export function validateLayout(entities, data) {
             continue
         }
         let [dx, dy] = STEP[e.direction]
-        let pick = at(e.x - dx, e.y - dy)
-        let drop = at(e.x + dx, e.y + dy)
+        let pick = at(e.x + dx, e.y + dy)
+        let drop = at(e.x - dx, e.y - dy)
         if (!connectable(pick)) {
             errors.push(`${e.name} at (${e.x},${e.y}) has nothing to pick up from`)
         }

@@ -44,7 +44,7 @@ export function describeTask(requirement, furnace, data) {
 export const SYSTEM_PROMPT = `You design smelting columns for Factorio. You are given a task as JSON. Reply with a single JSON object and nothing else, with exactly these keys:
 - "furnaces": integer, how many furnaces (at least fewest_furnaces; a few spare is fine, many is wasteful)
 - "columns": 1 or 2. Two columns share the middle output belt and each have their own input belt, which halves the load on an input belt.
-- "input_belt", "output_belt": belt names from options.belts. A belt must carry the load on it: one input belt carries (furnaces / columns, rounded up) times per_furnace.input_per_second; the output belt carries the whole production. Prefer the cheapest belt that is sufficient.
+- "input_belt", "output_belt": belt names from options.belts, whose rates are for both lanes. A belt must carry the load on it: one input belt carries (furnaces / columns, rounded up) times per_furnace.input_per_second. The output belt carries the whole production, but inserters only drop onto the far lane of a belt: with one column all output goes onto one lane, so the output belt carries only half its listed rate; with two columns it carries the full rate. Prefer the cheapest belt that is sufficient.
 - "input_inserter", "output_inserter": inserter names from options.inserters. An inserter must move at least per_furnace.input_per_second from a belt (input) or per_furnace.output_per_second (output). Prefer the cheapest sufficient inserter.
 - "pole": a pole name from options.poles.
 - "notes": one short sentence on your choices.
@@ -79,12 +79,14 @@ export function defaultParams(requirement, furnace, data) {
     let columns = 1
     let belts = task.options.belts
     let inNeed = (cols) => Math.ceil(furnaces / cols) * task.per_furnace.input_per_second
+    let outNeed = furnaces * task.per_furnace.output_per_second
     let beltFor = need => belts.find(b => b.items_per_second >= need)
-    if (!beltFor(inNeed(1))) {
+    // With one column the output uses a single lane of its belt.
+    if (!beltFor(inNeed(1)) || !beltFor(outNeed * 2)) {
         columns = 2
     }
     let inputBelt = beltFor(inNeed(columns)) || belts[belts.length - 1]
-    let outputBelt = beltFor(furnaces * task.per_furnace.output_per_second) || belts[belts.length - 1]
+    let outputBelt = beltFor(columns === 1 ? outNeed * 2 : outNeed) || belts[belts.length - 1]
     let ins = task.options.inserters
     let inputInserter = ins.find(i => i.from_belt_per_second >= task.per_furnace.input_per_second) || ins[ins.length - 1]
     let outputInserter = ins.find(i => i.to_belt_per_second >= task.per_furnace.output_per_second) || ins[ins.length - 1]
@@ -115,6 +117,6 @@ export function buildSmeltingBlueprint(params, requirement, data) {
     }
     let recipe = lookupRecipe(data, requirement.recipe)
     let label = `${params.furnaces}x ${params.furnace}: ${recipe.localized_name.en}`
-    let blueprint = makeBlueprint(placed.entities, label, [params.furnace, recipe.results[0].name])
+    let blueprint = makeBlueprint(placed.entities, label, [params.furnace, recipe.results[0].name], data)
     return {ok: true, errors: [], warnings: checked.warnings, stats: checked.stats, entities: placed.entities, blueprint}
 }
