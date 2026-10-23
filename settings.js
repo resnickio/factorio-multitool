@@ -15,11 +15,12 @@ import { DEFAULT_RATE, DEFAULT_RATE_PRECISION, DEFAULT_COUNT_PRECISION, DEFAULT_
 import { colorSchemes } from "./color.js"
 import { DEFAULT_TAB, clickTab, DEFAULT_VISUALIZER, visualizerType, setVisualizerType, DEFAULT_RENDER, visualizerRender, setVisualizerRender, visualizerDirection, getDefaultVisDirection, setVisualizerDirection } from "./events.js"
 import { spec, DEFAULT_PLANET, DEFAULT_BELT, DEFAULT_FUEL, buildingSort } from "./factory.js"
-import { getRecipeGroups } from "./groups.js"
 import { changeMod } from "./init.js"
 import { shortModules, moduleRows, moduleDropdown } from "./module.js"
 import { Rational, zero } from "./rational.js"
 import { sorted } from "./sort.js"
+import { researchClosure } from "./technology.js"
+import { renderRecipeToggles, refreshRecipeToggles, renderResearch } from "./research_ui.js"
 
 // data set
 
@@ -723,6 +724,26 @@ function renderRecipes(settings) {
         planetRow.style("display", "none")
     }
 
+    if (spec.technologies) {
+        let researched = null
+        if (settings.has("research")) {
+            researched = new Set()
+            let value = settings.get("research")
+            if (value !== "none") {
+                for (let key of value.split(",")) {
+                    let tech = spec.technologies.get(key)
+                    if (tech) {
+                        researched.add(tech)
+                    } else {
+                        reportUnknown("technology", key)
+                    }
+                }
+            }
+            researched = researchClosure(researched)
+        }
+        spec.setResearched(researched, false)
+    }
+
     if (settings.has("disable") || settings.has("enable")) {
         if (settings.has("disable")) {
             let keys = settings.get("disable").split(",")
@@ -775,44 +796,14 @@ function renderRecipes(settings) {
                         d3.selectAll("#planet_selector .toggle")
                             .classed("selected", d => spec.selectedPlanets.has(d))
                     }
-                    d3.selectAll("#recipe_toggles .toggle")
-                        .classed("selected", d => !spec.disable.has(d))
+                    refreshRecipeToggles()
                     spec.updateSolution()
                 })
                 .append(d => d.icon.make(32))
     }
 
-    let allGroups = getRecipeGroups(new Set(spec.recipes.values()))
-    let groups = []
-    for (let group of allGroups) {
-        if (group.size > 1) {
-            groups.push(sorted(group, d => d.order))
-        }
-    }
-
-    let div = d3.select("#recipe_toggles")
-        .classed("toggle-list", true)
-    div.selectAll("*").remove()
-    let recipe = div.selectAll("div")
-        .data(groups)
-        .join("div")
-            .classed("toggle-row", true)
-            .selectAll("div")
-            .data(d => d)
-            .join("div")
-                .classed("toggle recipe", true)
-                .classed("selected", d => !spec.disable.has(d))
-                .on("click", function(event, d) {
-                    let disabled = spec.disable.has(d)
-                    d3.select(this).classed("selected", disabled)
-                    if (disabled) {
-                        spec.setEnable(d)
-                    } else {
-                        spec.setDisable(d)
-                    }
-                    spec.updateSolution()
-                })
-    recipe.append(d => d.icon.make(32))
+    renderResearch()
+    renderRecipeToggles()
 }
 
 // resource priority

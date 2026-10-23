@@ -370,10 +370,63 @@ for (let [name, proto] of Object.entries(raw.recipe)) {
     if (proto.surface_conditions) {
         r.surface_conditions = convertConditions(proto.surface_conditions)
     }
+    // Recipes are enabled from the start unless a technology unlocks them.
+    if (proto.enabled !== false) {
+        r.enabled_at_start = true
+    }
     if (!setIcon(r, ["recipe", name])) {
         continue
     }
     recipes.push(r)
+}
+
+// ---------------------------------------------------------------------------
+// Technologies. Only those which unlock a recipe in this dataset are kept,
+// along with everything they transitively require.
+// ---------------------------------------------------------------------------
+
+const recipeKeys = new Set(recipes.map(r => r.key))
+const techUnlocks = new Map()
+for (let [name, proto] of Object.entries(raw.technology)) {
+    let unlocked = []
+    for (let effect of proto.effects || []) {
+        if (effect.type === "unlock-recipe" && recipeKeys.has(effect.recipe)) {
+            unlocked.push(effect.recipe)
+        }
+    }
+    techUnlocks.set(name, unlocked)
+}
+const keptTechs = new Set()
+function keepTech(name) {
+    if (keptTechs.has(name) || !raw.technology[name]) {
+        return
+    }
+    keptTechs.add(name)
+    for (let p of raw.technology[name].prerequisites || []) {
+        keepTech(p)
+    }
+}
+for (let [name, unlocked] of techUnlocks) {
+    if (unlocked.length > 0) {
+        keepTech(name)
+    }
+}
+
+const technologies = []
+for (let name of [...keptTechs].sort()) {
+    let proto = raw.technology[name]
+    let t = {
+        key: name,
+        localized_name: localName(["technology"], name),
+        prerequisites: (proto.prerequisites || []).filter(p => keptTechs.has(p)).sort(),
+        recipes: techUnlocks.get(name).sort(),
+        science_packs: ((proto.unit && proto.unit.ingredients) || []).map(i => Array.isArray(i) ? i[0] : i.name).sort(),
+    }
+    if (proto.research_trigger) {
+        t.trigger = true
+    }
+    setIcon(t, ["technology", name])
+    technologies.push(t)
 }
 
 // ---------------------------------------------------------------------------
@@ -741,6 +794,7 @@ const data = {
         width: sheet.width,
     },
     surface_properties,
+    technologies,
 }
 
 function sortKeys(x) {

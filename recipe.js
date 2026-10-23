@@ -240,7 +240,7 @@ function makeRecipe(data, items, d) {
             conditions.push(new SurfaceCondition(property, min, max))
         }
     }
-    return new Recipe(
+    let recipe = new Recipe(
         d.key,
         d.localized_name.en,
         d.order,
@@ -253,6 +253,8 @@ function makeRecipe(data, items, d) {
         products,
         conditions,
     )
+    recipe.subgroup = d.subgroup
+    return recipe
 }
 
 class ResourceRecipe extends Recipe {

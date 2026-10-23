@@ -140,6 +140,12 @@ class FactorySpecification {
         this.recipes = null
         this.modules = null
         this.planets = null
+        this.technologies = null
+        // The set of researched technologies, or null if research progress is
+        // not being considered (all recipes are available).
+        this.researched = null
+        // Recipes not yet unlocked, given the researched technologies.
+        this.locked = new Set()
         this.buildings = null
         this.buildingKeys = null
         this.belts = null
@@ -181,10 +187,11 @@ class FactorySpecification {
 
         this.debug = false
     }
-    setData(items, recipes, planets, modules, buildings, belts, fuels, itemGroups) {
+    setData(items, recipes, planets, technologies, modules, buildings, belts, fuels, itemGroups) {
         this.items = items
         this.recipes = recipes
         this.planets = planets
+        this.technologies = technologies
         this.modules = modules
         this.buildings = getBuildingGroups(buildings, recipes)
         this.buildingKeys = new Map()
@@ -301,6 +308,9 @@ class FactorySpecification {
                 allDisable = newDisable
             }
         }
+        for (let r of this.locked) {
+            allDisable.add(r)
+        }
         this.planetaryBaseline = allDisable
         let toEnable = new Set()
         for (let r of this.disable) {
@@ -316,6 +326,29 @@ class FactorySpecification {
                 this.setDisable(r)
             }
         }
+    }
+    // Sets the researched technologies (a Set of Technology, which must be
+    // closed under prerequisites), or null to ignore research progress. Recipes
+    // which are not unlocked become disabled, as if by the planet.
+    setResearched(researched, sync = true) {
+        this.researched = researched
+        this.locked = new Set()
+        if (researched !== null) {
+            for (let recipe of this.recipes.values()) {
+                if (recipe.unlockedBy === undefined || recipe.unlockedBy.length === 0 || recipe.enabledAtStart) {
+                    continue
+                }
+                if (!recipe.unlockedBy.some(t => researched.has(t))) {
+                    this.locked.add(recipe)
+                }
+            }
+        }
+        if (sync) {
+            this._syncPlanetDisable()
+        }
+    }
+    isDefaultResearch() {
+        return this.researched === null
     }
     isDefaultPlanet() {
         if (!this.planets || this.planets.size === 1) {

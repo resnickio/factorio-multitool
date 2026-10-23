@@ -17,6 +17,7 @@ import { spec, DEFAULT_BELT, DEFAULT_FUEL } from "./factory.js"
 import { Rational } from "./rational.js"
 import { currentMod, DEFAULT_TITLE, DEFAULT_COLOR_SCHEME, colorScheme } from "./settings.js"
 import { sorted } from "./sort.js"
+import { researchLeaves } from "./technology.js"
 
 function getModuleKey(module) {
     let moduleKey
@@ -143,6 +144,10 @@ export function formatSettings(excludeTitle, overrideTab, targets) {
             planets.push(p.key)
         }
         settings += "&planet=" + planets.join(",")
+    }
+    if (spec.researched !== null) {
+        let leaves = researchLeaves(spec.researched).map(t => t.key).sort()
+        settings += "&research=" + (leaves.length > 0 ? leaves.join(",") : "none")
     }
     let {disable, enable} = spec.getNetDisable()
     if (disable.size !== 0) {
