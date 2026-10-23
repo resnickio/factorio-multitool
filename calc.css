@@ -112,6 +112,12 @@ div.tooltip img.ingredient {
     border: 2px solid var(--bright);
     font-family: monospace;
 }
+/* notice for unknown keys in a loaded link */
+.load_problems {
+    margin: 0.5em 0;
+    padding: 0.5em 1em;
+    border: 2px solid var(--bright);
+}
 /* build targets */
 .targetButton {
     height: 2em;
