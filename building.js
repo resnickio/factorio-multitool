@@ -32,6 +32,17 @@ class Building {
         this.icon_row = row
         this.icon = new Icon(this)
     }
+    canCraft(recipe) {
+        if (recipe.categories === null) {
+            return false
+        }
+        for (let category of recipe.categories) {
+            if (this.categories.has(category)) {
+                return true
+            }
+        }
+        return false
+    }
     less(other) {
         if (!this.speed.equal(other.speed)) {
             return this.speed.less(other.speed)

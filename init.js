@@ -13,10 +13,11 @@ See the License for the specific language governing permissions and
 limitations under the License.*/
 import { getBelts } from "./belt.js"
 import { getBuildings } from "./building.js"
+import { getTechnologies } from "./technology.js"
 import { resetDisplay } from "./display.js"
 import { spec, resetSpec } from "./factory.js"
 import { formatSettings, loadSettings } from "./fragment.js"
-import { getFuel } from "./fuel.js"
+import { getFuel, getFuelCategories } from "./fuel.js"
 import { getItemGroups } from "./group.js"
 import { getSprites } from "./icon.js"
 import { getItems } from "./item.js"
@@ -92,13 +93,16 @@ function loadData(modName, settings) {
         let items = getItems(data)
         let recipes = getRecipes(data, items)
         let planets = getPlanets(data, recipes)
+        let technologies = getTechnologies(data, recipes)
         let modules = getModules(data, items)
         let buildings = getBuildings(data, items)
         let belts = getBelts(data)
-        let fuel = getFuel(data, items)
+        let fuelCategories = getFuelCategories(data, items)
+        let fuel = getFuel(fuelCategories)
         getSprites(data)
         let itemGroups = getItemGroups(items, data)
-        spec.setData(items, recipes, planets, modules, buildings, belts, fuel, itemGroups)
+        spec.data = data
+        spec.setData(items, recipes, planets, technologies, modules, buildings, belts, fuel, fuelCategories, itemGroups)
 
         fixLegacySettings(settings)
         renderSettings(settings)

@@ -36,7 +36,16 @@ class Recipe {
         this.name = name
         this.order = order
         this.allow_productivity = allow_prod
-        this.category = category
+        // A recipe may be crafted by any building which supports at least one
+        // of its categories. Recipes without any category (null) are not
+        // crafted in a building.
+        if (category === null || category === undefined) {
+            this.categories = null
+        } else if (Array.isArray(category)) {
+            this.categories = category
+        } else {
+            this.categories = [category]
+        }
         this.time = time
         this.ingredients = ingredients
         for (let ing of ingredients) {
@@ -58,7 +67,11 @@ class Recipe {
     }
     fuelIngredient() {
         let building = spec.getBuilding(this)
-        if (building === null || building.fuel === null || building.fuel !== "chemical") {
+        if (building === null || building.fuel === null) {
+            return []
+        }
+        let fuel = spec.getFuelFor(building.fuel)
+        if (fuel === null) {
             return []
         }
         // baseRate = craft/s
@@ -69,8 +82,8 @@ class Recipe {
         let baseRate = spec.getRecipeRate(this)
         let basePower = spec.getPowerUsage(this, baseRate).power
         let perCraftEnergy = basePower.div(baseRate)
-        let fuelAmount = perCraftEnergy.div(spec.fuel.value)
-        return [new Ingredient(spec.fuel.item, fuelAmount)]
+        let fuelAmount = perCraftEnergy.div(fuel.value)
+        return [new Ingredient(fuel.item, fuelAmount)]
     }
     getIngredients() {
         return this.ingredients.concat(this.fuelIngredient())
@@ -176,7 +189,7 @@ export class DisabledRecipe {
     constructor(item) {
         this.key = DISABLED_RECIPE_PREFIX + item.key
         this.name = item.name
-        this.category = null
+        this.categories = null
         this.ingredients = []
         this.products = [new Ingredient(item, one)]
 
@@ -231,19 +244,21 @@ function makeRecipe(data, items, d) {
             conditions.push(new SurfaceCondition(property, min, max))
         }
     }
-    return new Recipe(
+    let recipe = new Recipe(
         d.key,
         d.localized_name.en,
         d.order,
         d.icon_col,
         d.icon_row,
         d.allow_productivity,
-        d.category,
+        d.categories || d.category,
         time,
         ingredients,
         products,
         conditions,
     )
+    recipe.subgroup = d.subgroup
+    return recipe
 }
 
 class ResourceRecipe extends Recipe {

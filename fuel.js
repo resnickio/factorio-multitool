@@ -52,7 +52,8 @@ class Fuel {
     }
 }
 
-export function getFuel(data, items) {
+// Returns a Map of fuel category to the list of fuels in it, sorted by energy.
+export function getFuelCategories(data, items) {
     let fuelCategories = new Map()
     for (let d of data.fuel) {
         let item = items.get(d.item_key)
@@ -82,6 +83,11 @@ export function getFuel(data, items) {
             return 0
         })
     }
+    return fuelCategories
+}
+
+// Returns the Map of chemical fuels, which the user may choose between.
+export function getFuel(fuelCategories) {
     let fuels = new Map()
     for (let fuel of fuelCategories.get("chemical")) {
         fuels.set(fuel.key, fuel)

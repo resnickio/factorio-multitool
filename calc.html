@@ -72,17 +72,20 @@ limitations under the License.-->
     <td class="changecell">
     <div class="changebox">
     Recent changes:<br>
-    2025-06-17 - Updated to 2.0.55.<br>
+    2026-10-23 - Added Space Age 2.1.23 dataset.<br>
     <a href="docs/changelog.html" target="_blank">Changelog</a>.
     </div>
     </td>
     </tr></table>
+
+    <div id="load_problems" class="load_problems" style="display: none"></div>
 
     <div class="tabs">
         <button class="tab_button" id="totals_button" onclick="handlers.clickTab('totals')">Factory</button>
         <button class="tab_button" id="graph_button" onclick="handlers.clickVisualize()">Visualize</button>
         <button class="tab_button" id="resources_button" onclick="handlers.clickTab('resources')">Resources</button>
         <button class="tab_button" id="settings_button" onclick="handlers.clickTab('settings')">Settings</button>
+        <button class="tab_button" id="blueprint_button" onclick="handlers.clickTab('blueprint')">Blueprint</button>
         <button class="tab_button" id="faq_button" onclick="handlers.clickTab('faq')">FAQ</button>
         <button class="tab_button" id="about_button" onclick="handlers.clickTab('about')">About</button>
         <button class="tab_button" id="debug_button" onclick="handlers.clickTab('debug')">Debug</button>
@@ -132,6 +135,7 @@ limitations under the License.-->
     </div>
 
     <div id="totals_tab" class="tab">
+        <div id="locked_summary" class="load_problems" style="display: none"></div>
         <table id="totals">
         <thead><tr></tr></thead>
         <tbody></tbody>
@@ -248,6 +252,11 @@ limitations under the License.-->
             </td>
             </tr>
 
+            <tr id="research_setting_row" class="setting-row" style="display: none">
+            <td class="setting-label top">Research:</td>
+            <td><div id="research_ui"></div></td>
+            </tr>
+
             <tr class="setting-row">
             <td class="setting-label top-icon"><div><span>Toggle recipes:</span></div></td>
             <td><div id="recipe_toggles"></div></td>
@@ -260,6 +269,10 @@ limitations under the License.-->
         <p>Click and drag items to configure resource priority.<br />
         Higher numbers = more valuable</p>
         <div id="resource_settings"></div>
+    </div>
+
+    <div id="blueprint_tab" class="tab">
+        <div id="blueprint_content"></div>
     </div>
 
     <div id="faq_tab" class="tab">

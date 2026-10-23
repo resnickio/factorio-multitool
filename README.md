@@ -14,7 +14,7 @@ An experimental standalone version of the calculator named `factoriocalc`, which
 
 ## Dumping new datasets
 
-The utility for dumping datasets from the game, as well as assembling the sprite sheets, is called `factoriodump`, and may be found in the [factorio-tools](https://github.com/KirkMcDonald/factorio-tools) repository.
+Datasets for 2.x are built from the game's own dumps with `tools/convert-data.mjs`; see [tools/README.md](tools/README.md). The older `factoriodump` utility in the [factorio-tools](https://github.com/KirkMcDonald/factorio-tools) repository is the original way to do this.
 
 ## Support the calculator
 

@@ -15,11 +15,12 @@ import { DEFAULT_RATE, DEFAULT_RATE_PRECISION, DEFAULT_COUNT_PRECISION, DEFAULT_
 import { colorSchemes } from "./color.js"
 import { DEFAULT_TAB, clickTab, DEFAULT_VISUALIZER, visualizerType, setVisualizerType, DEFAULT_RENDER, visualizerRender, setVisualizerRender, visualizerDirection, getDefaultVisDirection, setVisualizerDirection } from "./events.js"
 import { spec, DEFAULT_PLANET, DEFAULT_BELT, DEFAULT_FUEL, buildingSort } from "./factory.js"
-import { getRecipeGroups } from "./groups.js"
 import { changeMod } from "./init.js"
 import { shortModules, moduleRows, moduleDropdown } from "./module.js"
 import { Rational, zero } from "./rational.js"
 import { sorted } from "./sort.js"
+import { researchClosure } from "./technology.js"
+import { renderRecipeToggles, refreshRecipeToggles, renderResearch } from "./research_ui.js"
 
 // data set
 
@@ -34,13 +35,14 @@ class Modification {
 }
 
 export let MODIFICATIONS = new Map([
+    ["space-age-2-1-23", new Modification("Space Age 2.1.23", "space-age-2.1.23.json", false)],
     ["2-0-55", new Modification("Vanilla 2.0.55", "vanilla-2.0.55.json", false)],
+    ["space-age-2-0-55", new Modification("Space Age 2.0.55 (WORK IN PROGRESS)", "space-age-2.0.55.json", false)],
     ["1-1-110", new Modification("Vanilla 1.1.110", "vanilla-1.1.110.json", true)],
     ["1-1-110x", new Modification("Vanilla 1.1.110 - Expensive", "vanilla-1.1.110-expensive.json", true)],
-    ["space-age-2-0-55", new Modification("Space Age 2.0.55 (WORK IN PROGRESS)", "space-age-2.0.55.json", false)],
 ])
 
-let DEFAULT_MODIFICATION = "2-0-10"
+let DEFAULT_MODIFICATION = "space-age-2-1-23"
 
 // Ideally we'd write this as a generalized function, but for now we can hard-
 // code these version upgrades.
@@ -122,7 +124,7 @@ function renderTargets(settings) {
             let parts = targetString.split(":")
             let itemKey = parts[0]
             if (!spec.items.has(itemKey)) {
-                console.log("unknown item:", itemKey)
+                reportUnknown("item", itemKey)
                 continue
             }
             let target = spec.addTarget(itemKey)
@@ -132,7 +134,7 @@ function renderTargets(settings) {
                 if (parts.length > 3) {
                     let recipeKey = parts[3]
                     if (!spec.recipes.has(recipeKey)) {
-                        console.log("unknown recipe:", recipeKey)
+                        reportUnknown("recipe", recipeKey)
                         continue
                     }
                     recipe = spec.recipes.get(recipeKey)
@@ -162,7 +164,7 @@ function getModule(moduleKey) {
         module = null
     }
     if (module === undefined) {
-        console.log("unknown module:", moduleKey)
+        reportUnknown("module", moduleKey)
         return null
     }
     return module
@@ -178,7 +180,7 @@ function renderModules(settings) {
             let [recipeKey, ...moduleKeyList] = buildingModuleSettings.split(":")
             let recipe = spec.recipes.get(recipeKey)
             if (recipe === undefined) {
-                console.log("unknown recipe:", recipeKey)
+                reportUnknown("recipe", recipeKey)
                 continue
             }
             let moduleSpec = spec.getModuleSpec(recipe)
@@ -238,7 +240,7 @@ function renderIgnore(settings) {
         for (let itemKey of ignore) {
             let item = spec.items.get(itemKey)
             if (item === undefined) {
-                console.log("unknown item:", itemKey)
+                reportUnknown("item", itemKey)
                 continue
             }
             spec.ignore.add(item)
@@ -397,7 +399,7 @@ function renderBuildings(settings) {
         for (let key of buildingKeys) {
             let building = spec.buildingKeys.get(key)
             if (building === undefined) {
-                console.log("unknown building:", key)
+                reportUnknown("building", key)
                 continue
             }
             spec.setMinimumBuilding(building)
@@ -463,7 +465,7 @@ function renderBelts(settings) {
         if (spec.belts.has(b)) {
             beltKey = b
         } else {
-            console.log("unknown belt:", b)
+            reportUnknown("belt", b)
         }
     }
     spec.belt = spec.belts.get(beltKey)
@@ -497,7 +499,7 @@ function renderFuel(settings) {
         if (spec.fuels.has(f)) {
             fuelKey = f
         } else {
-            console.log("unknown fuel:", f)
+            reportUnknown("fuel", f)
         }
     }
     spec.fuel = spec.fuels.get(fuelKey)
@@ -722,6 +724,26 @@ function renderRecipes(settings) {
         planetRow.style("display", "none")
     }
 
+    if (spec.technologies) {
+        let researched = null
+        if (settings.has("research")) {
+            researched = new Set()
+            let value = settings.get("research")
+            if (value !== "none") {
+                for (let key of value.split(",")) {
+                    let tech = spec.technologies.get(key)
+                    if (tech) {
+                        researched.add(tech)
+                    } else {
+                        reportUnknown("technology", key)
+                    }
+                }
+            }
+            researched = researchClosure(researched)
+        }
+        spec.setResearched(researched)
+    }
+
     if (settings.has("disable") || settings.has("enable")) {
         if (settings.has("disable")) {
             let keys = settings.get("disable").split(",")
@@ -729,6 +751,8 @@ function renderRecipes(settings) {
                 let recipe = spec.recipes.get(k)
                 if (recipe) {
                     spec.setDisable(recipe)
+                } else {
+                    reportUnknown("recipe", k)
                 }
             }
         }
@@ -738,6 +762,8 @@ function renderRecipes(settings) {
                 let recipe = spec.recipes.get(k)
                 if (recipe) {
                     spec.setEnable(recipe)
+                } else {
+                    reportUnknown("recipe", k)
                 }
             }
         }
@@ -770,44 +796,14 @@ function renderRecipes(settings) {
                         d3.selectAll("#planet_selector .toggle")
                             .classed("selected", d => spec.selectedPlanets.has(d))
                     }
-                    d3.selectAll("#recipe_toggles .toggle")
-                        .classed("selected", d => !spec.disable.has(d))
+                    refreshRecipeToggles()
                     spec.updateSolution()
                 })
                 .append(d => d.icon.make(32))
     }
 
-    let allGroups = getRecipeGroups(new Set(spec.recipes.values()))
-    let groups = []
-    for (let group of allGroups) {
-        if (group.size > 1) {
-            groups.push(sorted(group, d => d.order))
-        }
-    }
-
-    let div = d3.select("#recipe_toggles")
-        .classed("toggle-list", true)
-    div.selectAll("*").remove()
-    let recipe = div.selectAll("div")
-        .data(groups)
-        .join("div")
-            .classed("toggle-row", true)
-            .selectAll("div")
-            .data(d => d)
-            .join("div")
-                .classed("toggle recipe", true)
-                .classed("selected", d => !spec.disable.has(d))
-                .on("click", function(event, d) {
-                    let disabled = spec.disable.has(d)
-                    d3.select(this).classed("selected", disabled)
-                    if (disabled) {
-                        spec.setEnable(d)
-                    } else {
-                        spec.setDisable(d)
-                    }
-                    spec.updateSolution()
-                })
-    recipe.append(d => d.icon.make(32))
+    renderResearch()
+    renderRecipeToggles()
 }
 
 // resource priority
@@ -849,7 +845,36 @@ function renderDebugCheckbox(settings) {
     d3.select("#render_debug").property("checked", spec.debug)
 }
 
+// Keys in the URL which the current data set does not know about. These are
+// collected while loading and shown in a banner, since the rest of the URL is
+// still applied.
+let loadProblems = []
+
+function reportUnknown(kind, key) {
+    console.log("unknown " + kind + ":", key)
+    loadProblems.push(`${kind} "${key}"`)
+}
+
+function renderLoadProblems() {
+    let box = d3.select("#load_problems")
+    box.selectAll("*").remove()
+    box.style("display", loadProblems.length > 0 ? null : "none")
+    if (loadProblems.length === 0) {
+        return
+    }
+    box.append("span")
+        .text("Some parts of this link are not in the selected data set, and were skipped: " + loadProblems.join(", ") + ". ")
+    box.append("a")
+        .attr("href", "#")
+        .text("Dismiss")
+        .on("click", function(event) {
+            event.preventDefault()
+            box.style("display", "none")
+        })
+}
+
 export function renderSettings(settings) {
+    loadProblems = []
     renderTitle(settings)
     renderIgnore(settings)
     renderRateOptions(settings)
@@ -869,4 +894,5 @@ export function renderSettings(settings) {
     renderModules(settings)
     renderDebugCheckbox(settings)
     renderTab(settings)
+    renderLoadProblems()
 }

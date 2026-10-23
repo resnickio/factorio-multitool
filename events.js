@@ -11,6 +11,7 @@ distributed under the License is distributed on an "AS IS" BASIS,
 WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.*/
+import { renderBlueprint } from "./blueprint_ui.js"
 import { spec } from "./factory.js"
 import { Rational } from "./rational.js"
 import { setTitle } from "./settings.js"
@@ -39,6 +40,9 @@ export function clickTab(tabName) {
         .style("display", "block")
     d3.select("#" + tabName + "_button")
         .classed("active", true)
+    if (tabName === "blueprint") {
+        renderBlueprint()
+    }
     spec.setHash()
 }
 

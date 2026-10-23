@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.*/
 import { Formatter } from "./align.js"
+import { renderBlueprint } from "./blueprint_ui.js"
 import { renderDebug } from "./debug.js"
 import { displayItems } from "./display.js"
 import { currentTab } from "./events.js"
@@ -87,7 +88,7 @@ class BuildingGroup {
     getBuilding(recipe) {
         let b = null
         for (let building of this.buildings) {
-            if (building.categories.has(recipe.category)) {
+            if (building.canCraft(recipe)) {
                 b = building
                 if (building === this.building || this.building.less(building)) {
                     return building
@@ -98,7 +99,10 @@ class BuildingGroup {
     }
 }
 
-function getBuildingGroups(buildings) {
+// Buildings are grouped together if they share a crafting category, or if
+// they can each craft some recipe which lists multiple categories. Within a
+// group, buildings are interchangeable for the recipes they have in common.
+function getBuildingGroups(buildings, recipes) {
     let sets = new Set()
     for (let building of buildings) {
         let set = new BuildingSet(building)
@@ -109,6 +113,16 @@ function getBuildingGroups(buildings) {
             }
         }
         sets.add(set)
+    }
+    for (let recipe of recipes.values()) {
+        if (recipe.categories === null || recipe.categories.length < 2) {
+            continue
+        }
+        let linked = Array.from(sets).filter(s => recipe.categories.some(c => s.categories.has(c)))
+        for (let i = 1; i < linked.length; i++) {
+            linked[0].merge(linked[i])
+            sets.delete(linked[i])
+        }
     }
     let groups = new Map()
     for (let {categories, buildings} of sets) {
@@ -127,6 +141,14 @@ class FactorySpecification {
         this.recipes = null
         this.modules = null
         this.planets = null
+        this.technologies = null
+        // The raw dataset, for features which need more than the model of it.
+        this.data = null
+        // The set of researched technologies, or null if research progress is
+        // not being considered (all recipes are available).
+        this.researched = null
+        // Recipes not yet unlocked, given the researched technologies.
+        this.locked = new Set()
         this.buildings = null
         this.buildingKeys = null
         this.belts = null
@@ -168,12 +190,13 @@ class FactorySpecification {
 
         this.debug = false
     }
-    setData(items, recipes, planets, modules, buildings, belts, fuels, itemGroups) {
+    setData(items, recipes, planets, technologies, modules, buildings, belts, fuels, fuelCategories, itemGroups) {
         this.items = items
         this.recipes = recipes
         this.planets = planets
+        this.technologies = technologies
         this.modules = modules
-        this.buildings = getBuildingGroups(buildings)
+        this.buildings = getBuildingGroups(buildings, recipes)
         this.buildingKeys = new Map()
         for (let building of buildings) {
             this.buildingKeys.set(building.key, building)
@@ -181,6 +204,7 @@ class FactorySpecification {
         this.belts = belts
         this.belt = belts.get(DEFAULT_BELT)
         this.fuels = fuels
+        this.fuelCategories = fuelCategories
         this.fuel = fuels.get(DEFAULT_FUEL)
         this.miningProd = zero
         this.itemGroups = itemGroups
@@ -288,6 +312,9 @@ class FactorySpecification {
                 allDisable = newDisable
             }
         }
+        for (let r of this.locked) {
+            allDisable.add(r)
+        }
         this.planetaryBaseline = allDisable
         let toEnable = new Set()
         for (let r of this.disable) {
@@ -303,6 +330,29 @@ class FactorySpecification {
                 this.setDisable(r)
             }
         }
+    }
+    // Sets the researched technologies (a Set of Technology, which must be
+    // closed under prerequisites), or null to ignore research progress. Recipes
+    // which are not unlocked become disabled, as if by the planet.
+    setResearched(researched, sync = true) {
+        this.researched = researched
+        this.locked = new Set()
+        if (researched !== null) {
+            for (let recipe of this.recipes.values()) {
+                if (recipe.unlockedBy === undefined || recipe.unlockedBy.length === 0 || recipe.enabledAtStart) {
+                    continue
+                }
+                if (!recipe.unlockedBy.some(t => researched.has(t))) {
+                    this.locked.add(recipe)
+                }
+            }
+        }
+        if (sync) {
+            this._syncPlanetDisable()
+        }
+    }
+    isDefaultResearch() {
+        return this.researched === null
     }
     isDefaultPlanet() {
         if (!this.planets || this.planets.size === 1) {
@@ -485,12 +535,24 @@ class FactorySpecification {
         }
         return false
     }
-    getBuilding(recipe) {
-        if (recipe.category === null || recipe.category === undefined) {
+    getRecipeBuildingGroup(recipe) {
+        if (recipe.categories === null || recipe.categories === undefined) {
             return null
-        } else {
-            return this.buildings.get(recipe.category).getBuilding(recipe)
         }
+        for (let category of recipe.categories) {
+            let group = this.buildings.get(category)
+            if (group !== undefined) {
+                return group
+            }
+        }
+        return null
+    }
+    getBuilding(recipe) {
+        let group = this.getRecipeBuildingGroup(recipe)
+        if (group === null) {
+            return null
+        }
+        return group.getBuilding(recipe)
     }
     getBuildingGroup(building) {
         let cat = Array.from(building.categories)[0]
@@ -500,7 +562,7 @@ class FactorySpecification {
         let group = this.getBuildingGroup(building)
         group.building = building
         for (let [recipe, moduleSpec] of this.spec) {
-            let g = this.buildings.get(recipe.category)
+            let g = this.getRecipeBuildingGroup(recipe)
             if (group === g) {
                 let b = this.getBuilding(recipe)
                 moduleSpec.setBuilding(b, this)
@@ -614,6 +676,19 @@ class FactorySpecification {
     }
     getBeltCount(rate) {
         return rate.div(this.belt.rate)
+    }
+    // Returns the Fuel which buildings burning the given fuel category use. The
+    // user chooses between chemical fuels; other categories (such as the
+    // biochamber's nutrients) are used as they come.
+    getFuelFor(category) {
+        if (category === "chemical") {
+            return this.fuel
+        }
+        let fuels = this.fuelCategories.get(category)
+        if (fuels === undefined || fuels.length === 0) {
+            return null
+        }
+        return fuels[0]
     }
     getPowerUsage(recipe, rate) {
         let building = this.getBuilding(recipe)
@@ -747,6 +822,9 @@ class FactorySpecification {
         displayItems(this, this.lastTotals)
         if (currentTab === "graph") {
             renderTotals(this.lastTotals, this.ignore)
+        }
+        if (currentTab === "blueprint") {
+            renderBlueprint()
         }
         reapTooltips()
         this.setHash()

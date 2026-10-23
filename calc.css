@@ -112,6 +112,12 @@ div.tooltip img.ingredient {
     border: 2px solid var(--bright);
     font-family: monospace;
 }
+/* notice for unknown keys in a loaded link */
+.load_problems {
+    margin: 0.5em 0;
+    padding: 0.5em 1em;
+    border: 2px solid var(--bright);
+}
 /* build targets */
 .targetButton {
     height: 2em;
@@ -453,4 +459,118 @@ svg.popout {
     border-top: 3px solid var(--accent);
     padding-top: 2px;
     background-color: var(--medium);
+}
+
+/* recipe and research toggles */
+.toggle-list .filter-input {
+    display: block;
+    width: 22em;
+    max-width: 100%;
+    margin: 0.3em 2px;
+}
+.toggle-list .toggle.named {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding-right: 8px;
+}
+.toggle-list .toggle.locked {
+    opacity: 0.55;
+}
+.toggle-list .toggle-name {
+    font-size: 0.85em;
+}
+.toggle-list .lock-note {
+    font-size: 0.75em;
+    font-style: italic;
+}
+.toggle-list .section-title {
+    color: var(--accent);
+    margin: 0.7em 2px 0.2em;
+    font-size: 1em;
+    cursor: default;
+}
+.toggle-list details > summary.section-title {
+    cursor: pointer;
+}
+.research-mode label {
+    display: block;
+}
+.research-presets {
+    margin: 0.5em 0;
+}
+.research-presets button {
+    margin: 2px;
+}
+.research-presets .hint {
+    font-size: 0.8em;
+}
+#research_ui, #recipe_toggles {
+    max-width: calc(100vw - 12em);
+}
+.research-import {
+    margin: 0.5em 2px;
+}
+.research-import .command-input {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    font-family: monospace;
+    font-size: 0.8em;
+    margin: 0.3em 0;
+}
+.research-import .import-text {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0.3em 0;
+}
+/* recipes in the solution which are not unlocked */
+tr.locked-recipe td.item-icon {
+    box-shadow: inset 3px 0 0 var(--accent);
+}
+
+/* blueprint tab */
+#blueprint_content {
+    padding: 0 1em;
+    max-width: 60em;
+}
+.blueprint-list td {
+    padding: 2px 8px;
+}
+.blueprint-list tr.selected td {
+    background: var(--light);
+}
+.blueprint-panel {
+    margin-top: 1em;
+}
+.blueprint-api input {
+    display: block;
+    margin: 0.3em 0;
+    width: 24em;
+    max-width: 100%;
+}
+.blueprint-error {
+    color: var(--accent);
+    margin: 0.5em 0;
+}
+.blueprint-preview {
+    font-family: monospace;
+    line-height: 1;
+    max-height: 24em;
+    overflow: auto;
+    border: 1px solid var(--light);
+    padding: 0.5em;
+}
+.blueprint-text {
+    display: block;
+    width: 100%;
+    box-sizing: border-box;
+    margin: 0.5em 0;
+    font-family: monospace;
+    font-size: 0.7em;
+}
+.blueprint-log {
+    white-space: pre-wrap;
+    font-size: 0.8em;
 }
