@@ -1,0 +1,9 @@
+{
+  "name": "factorio-calc-tools",
+  "private": true,
+  "type": "module",
+  "description": "Dataset conversion tooling for the Factorio calculator.",
+  "dependencies": {
+    "sharp": "0.33.5"
+  }
+}

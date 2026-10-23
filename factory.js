@@ -87,7 +87,7 @@ class BuildingGroup {
     getBuilding(recipe) {
         let b = null
         for (let building of this.buildings) {
-            if (building.categories.has(recipe.category)) {
+            if (building.canCraft(recipe)) {
                 b = building
                 if (building === this.building || this.building.less(building)) {
                     return building
@@ -98,7 +98,10 @@ class BuildingGroup {
     }
 }
 
-function getBuildingGroups(buildings) {
+// Buildings are grouped together if they share a crafting category, or if
+// they can each craft some recipe which lists multiple categories. Within a
+// group, buildings are interchangeable for the recipes they have in common.
+function getBuildingGroups(buildings, recipes) {
     let sets = new Set()
     for (let building of buildings) {
         let set = new BuildingSet(building)
@@ -109,6 +112,16 @@ function getBuildingGroups(buildings) {
             }
         }
         sets.add(set)
+    }
+    for (let recipe of recipes.values()) {
+        if (recipe.categories === null || recipe.categories.length < 2) {
+            continue
+        }
+        let linked = Array.from(sets).filter(s => recipe.categories.some(c => s.categories.has(c)))
+        for (let i = 1; i < linked.length; i++) {
+            linked[0].merge(linked[i])
+            sets.delete(linked[i])
+        }
     }
     let groups = new Map()
     for (let {categories, buildings} of sets) {
@@ -173,7 +186,7 @@ class FactorySpecification {
         this.recipes = recipes
         this.planets = planets
         this.modules = modules
-        this.buildings = getBuildingGroups(buildings)
+        this.buildings = getBuildingGroups(buildings, recipes)
         this.buildingKeys = new Map()
         for (let building of buildings) {
             this.buildingKeys.set(building.key, building)
@@ -485,12 +498,24 @@ class FactorySpecification {
         }
         return false
     }
-    getBuilding(recipe) {
-        if (recipe.category === null || recipe.category === undefined) {
+    getRecipeBuildingGroup(recipe) {
+        if (recipe.categories === null || recipe.categories === undefined) {
             return null
-        } else {
-            return this.buildings.get(recipe.category).getBuilding(recipe)
         }
+        for (let category of recipe.categories) {
+            let group = this.buildings.get(category)
+            if (group !== undefined) {
+                return group
+            }
+        }
+        return null
+    }
+    getBuilding(recipe) {
+        let group = this.getRecipeBuildingGroup(recipe)
+        if (group === null) {
+            return null
+        }
+        return group.getBuilding(recipe)
     }
     getBuildingGroup(building) {
         let cat = Array.from(building.categories)[0]
@@ -500,7 +525,7 @@ class FactorySpecification {
         let group = this.getBuildingGroup(building)
         group.building = building
         for (let [recipe, moduleSpec] of this.spec) {
-            let g = this.buildings.get(recipe.category)
+            let g = this.getRecipeBuildingGroup(recipe)
             if (group === g) {
                 let b = this.getBuilding(recipe)
                 moduleSpec.setBuilding(b, this)
