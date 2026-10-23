@@ -525,3 +525,7 @@ svg.popout {
     box-sizing: border-box;
     margin: 0.3em 0;
 }
+/* recipes in the solution which are not unlocked */
+tr.locked-recipe td.item-icon {
+    box-shadow: inset 3px 0 0 var(--accent);
+}

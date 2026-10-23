@@ -453,6 +453,36 @@ class PipeIcon {
     }
 }
 
+// Lists the technologies still needed by recipes in the solution which are
+// not unlocked (and have been turned on by hand regardless).
+function displayLockedSummary(totals) {
+    let box = d3.select("#locked_summary")
+    box.selectAll("*").remove()
+    let byTech = new Map()
+    for (let recipe of totals.rates.keys()) {
+        if (!spec.locked.has(recipe)) {
+            continue
+        }
+        let key = recipe.unlockedBy.map(t => t.name).join(" or ")
+        if (!byTech.has(key)) {
+            byTech.set(key, [])
+        }
+        byTech.get(key).push(recipe.name)
+    }
+    box.style("display", byTech.size > 0 ? null : "none")
+    if (byTech.size === 0) {
+        return
+    }
+    box.append("b")
+        .text("This factory uses recipes which are not unlocked yet: ")
+    let parts = []
+    for (let [tech, names] of byTech) {
+        parts.push(`${names.join(", ")} (needs ${tech})`)
+    }
+    box.append("span")
+        .text(parts.join("; "))
+}
+
 export function displayItems(spec, totals) {
     let headers = [
         new Header("", 1),
@@ -593,6 +623,14 @@ export function displayItems(spec, totals) {
         .classed("nomodule", d => d.moduleSpec === null)
         .classed("noitem", d => d.item === null)
     // Update row data.
+    row.classed("locked-recipe", d => d.recipe !== null && spec.locked.has(d.recipe))
+        .attr("title", d => {
+            if (d.recipe === null || !spec.locked.has(d.recipe)) {
+                return null
+            }
+            return "Not yet unlocked: needs " + d.recipe.unlockedBy.map(t => t.name).join(" or ")
+        })
+    displayLockedSummary(totals)
     let itemRow = row.filter(d => d.item !== null)
     let itemIcon = itemRow.selectAll(".item-icon")
     itemIcon.selectAll("img").remove()

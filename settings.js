@@ -741,7 +741,7 @@ function renderRecipes(settings) {
             }
             researched = researchClosure(researched)
         }
-        spec.setResearched(researched, false)
+        spec.setResearched(researched)
     }
 
     if (settings.has("disable") || settings.has("enable")) {
