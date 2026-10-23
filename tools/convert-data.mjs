@@ -566,6 +566,48 @@ const beacon = {
 }
 
 // ---------------------------------------------------------------------------
+// Entities used when generating blueprints: footprint, plus whatever is
+// needed to check a layout works.
+// ---------------------------------------------------------------------------
+
+function footprint(proto) {
+    let [[x1, y1], [x2, y2]] = proto.collision_box
+    // Collision boxes are slightly smaller than the tiles they occupy.
+    return {width: Math.ceil(x2 - x1 - 0.01), height: Math.ceil(y2 - y1 - 0.01)}
+}
+
+const blueprint_entities = {}
+for (let [name, proto] of Object.entries(raw.furnace)) {
+    if (proto.energy_source.type === "electric") {
+        blueprint_entities[name] = {type: "furnace", ...footprint(proto), crafting_speed: proto.crafting_speed, energy_usage: energy(proto.energy_usage)}
+    }
+}
+for (let [name, proto] of Object.entries(raw["transport-belt"])) {
+    blueprint_entities[name] = {type: "transport-belt", ...footprint(proto), speed: proto.speed}
+}
+for (let [name, proto] of Object.entries(raw.inserter)) {
+    if (proto.energy_source.type !== "electric") {
+        continue
+    }
+    blueprint_entities[name] = {
+        type: "inserter",
+        ...footprint(proto),
+        rotation_speed: clean(proto.rotation_speed),
+        extension_speed: proto.extension_speed,
+        stack_size_bonus: proto.stack_size_bonus || 0,
+        pickup_distance: Math.abs(proto.pickup_position[1]),
+    }
+}
+for (let [name, proto] of Object.entries(raw["electric-pole"])) {
+    blueprint_entities[name] = {
+        type: "electric-pole",
+        ...footprint(proto),
+        supply_area_distance: proto.supply_area_distance,
+        maximum_wire_distance: proto.maximum_wire_distance,
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Resources, plants, planets
 // ---------------------------------------------------------------------------
 
@@ -767,6 +809,7 @@ if (args["write-sprites"]) {
 
 const data = {
     agricultural_tower,
+    blueprint_entities,
     beacon,
     belts,
     boilers,

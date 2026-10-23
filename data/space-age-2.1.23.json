@@ -165,6 +165,119 @@
             "speed": 0.125
         }
     ],
+    "blueprint_entities": {
+        "big-electric-pole": {
+            "height": 2,
+            "maximum_wire_distance": 32,
+            "supply_area_distance": 2,
+            "type": "electric-pole",
+            "width": 2
+        },
+        "bulk-inserter": {
+            "extension_speed": 0.1,
+            "height": 1,
+            "pickup_distance": 1,
+            "rotation_speed": 0.04,
+            "stack_size_bonus": 0,
+            "type": "inserter",
+            "width": 1
+        },
+        "electric-furnace": {
+            "crafting_speed": 2,
+            "energy_usage": 180000,
+            "height": 3,
+            "type": "furnace",
+            "width": 3
+        },
+        "express-transport-belt": {
+            "height": 1,
+            "speed": 0.09375,
+            "type": "transport-belt",
+            "width": 1
+        },
+        "fast-inserter": {
+            "extension_speed": 0.1,
+            "height": 1,
+            "pickup_distance": 1,
+            "rotation_speed": 0.04,
+            "stack_size_bonus": 0,
+            "type": "inserter",
+            "width": 1
+        },
+        "fast-transport-belt": {
+            "height": 1,
+            "speed": 0.0625,
+            "type": "transport-belt",
+            "width": 1
+        },
+        "inserter": {
+            "extension_speed": 0.035,
+            "height": 1,
+            "pickup_distance": 1,
+            "rotation_speed": 0.014,
+            "stack_size_bonus": 0,
+            "type": "inserter",
+            "width": 1
+        },
+        "long-handed-inserter": {
+            "extension_speed": 0.05,
+            "height": 1,
+            "pickup_distance": 2,
+            "rotation_speed": 0.02,
+            "stack_size_bonus": 0,
+            "type": "inserter",
+            "width": 1
+        },
+        "medium-electric-pole": {
+            "height": 1,
+            "maximum_wire_distance": 9,
+            "supply_area_distance": 3.5,
+            "type": "electric-pole",
+            "width": 1
+        },
+        "recycler": {
+            "crafting_speed": 0.5,
+            "energy_usage": 180000,
+            "height": 4,
+            "type": "furnace",
+            "width": 2
+        },
+        "small-electric-pole": {
+            "height": 1,
+            "maximum_wire_distance": 7.5,
+            "supply_area_distance": 2.5,
+            "type": "electric-pole",
+            "width": 1
+        },
+        "stack-inserter": {
+            "extension_speed": 0.1,
+            "height": 1,
+            "pickup_distance": 1,
+            "rotation_speed": 0.04,
+            "stack_size_bonus": 4,
+            "type": "inserter",
+            "width": 1
+        },
+        "substation": {
+            "height": 2,
+            "maximum_wire_distance": 18,
+            "supply_area_distance": 9,
+            "type": "electric-pole",
+            "width": 2
+        },
+        "transport-belt": {
+            "height": 1,
+            "speed": 0.03125,
+            "type": "transport-belt",
+            "width": 1
+        },
+        "turbo-transport-belt": {
+            "height": 1,
+            "speed": 0.125,
+            "type": "transport-belt",
+            "width": 1
+        }
+    },
     "boilers": [
         {
             "energy_consumption": 1800000,

@@ -12,6 +12,7 @@ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
 See the License for the specific language governing permissions and
 limitations under the License.*/
 import { Formatter } from "./align.js"
+import { renderBlueprint } from "./blueprint_ui.js"
 import { renderDebug } from "./debug.js"
 import { displayItems } from "./display.js"
 import { currentTab } from "./events.js"
@@ -141,6 +142,8 @@ class FactorySpecification {
         this.modules = null
         this.planets = null
         this.technologies = null
+        // The raw dataset, for features which need more than the model of it.
+        this.data = null
         // The set of researched technologies, or null if research progress is
         // not being considered (all recipes are available).
         this.researched = null
@@ -819,6 +822,9 @@ class FactorySpecification {
         displayItems(this, this.lastTotals)
         if (currentTab === "graph") {
             renderTotals(this.lastTotals, this.ignore)
+        }
+        if (currentTab === "blueprint") {
+            renderBlueprint()
         }
         reapTooltips()
         this.setHash()

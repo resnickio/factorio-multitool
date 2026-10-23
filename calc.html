@@ -85,6 +85,7 @@ limitations under the License.-->
         <button class="tab_button" id="graph_button" onclick="handlers.clickVisualize()">Visualize</button>
         <button class="tab_button" id="resources_button" onclick="handlers.clickTab('resources')">Resources</button>
         <button class="tab_button" id="settings_button" onclick="handlers.clickTab('settings')">Settings</button>
+        <button class="tab_button" id="blueprint_button" onclick="handlers.clickTab('blueprint')">Blueprint</button>
         <button class="tab_button" id="faq_button" onclick="handlers.clickTab('faq')">FAQ</button>
         <button class="tab_button" id="about_button" onclick="handlers.clickTab('about')">About</button>
         <button class="tab_button" id="debug_button" onclick="handlers.clickTab('debug')">Debug</button>
@@ -268,6 +269,10 @@ limitations under the License.-->
         <p>Click and drag items to configure resource priority.<br />
         Higher numbers = more valuable</p>
         <div id="resource_settings"></div>
+    </div>
+
+    <div id="blueprint_tab" class="tab">
+        <div id="blueprint_content"></div>
     </div>
 
     <div id="faq_tab" class="tab">

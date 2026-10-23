@@ -101,6 +101,7 @@ function loadData(modName, settings) {
         let fuel = getFuel(fuelCategories)
         getSprites(data)
         let itemGroups = getItemGroups(items, data)
+        spec.data = data
         spec.setData(items, recipes, planets, technologies, modules, buildings, belts, fuel, fuelCategories, itemGroups)
 
         fixLegacySettings(settings)
