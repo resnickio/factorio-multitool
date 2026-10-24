@@ -836,6 +836,51 @@ const lineReply = p => {
     })
 }
 
+const lineFetch = replies => {
+    let seen = []
+    let fetchFn = async (url, init) => {
+        seen.push(JSON.parse(init.body))
+        return {ok: true, json: async () => ({message: {role: "assistant", content: replies.shift()}})}
+    }
+    return {fetchFn, seen}
+}
+
+await test("extra machines a model asks for are cut back to what its inserters need", async () => {
+    let good = defaultLineParams(inserterPlan, data)
+    let padded = {...good, root: {...good.root, machines: good.root.machines + 2}}
+    let {fetchFn} = lineFetch([lineReply(padded)])
+    let r = await askForLineLayout({provider: "ollama", model: "m", spec: inserterPlan, data, fetchFn})
+    assert.ok(r.ok, (r.errors || []).join("; "))
+    assert.equal(r.params.root.machines, good.root.machines)
+    assert.equal(r.trimmed.length, 1)
+    assert.match(r.trimmed[0], /Inserter: \d+ → \d+ machines/)
+    assert.equal(r.blueprint.entities.filter(e => e.recipe === "inserter").length, good.root.machines)
+})
+
+await test("a working layout with more machines than the calculator needs is sent back once", async () => {
+    let good = defaultLineParams(inserterPlan, data)
+    // One fast inserter per machine makes the extra machines necessary, so
+    // trimming cannot help.
+    let weaken = s => ({...s, machines: s.machines + 2, inputInserter: "fast-inserter", inputInserters: 1})
+    let weak = {...good, east: {...good.east, stages: [weaken(good.east.stages[0]), good.east.stages[1]]}}
+    let {fetchFn, seen} = lineFetch([lineReply(weak), lineReply(good)])
+    let r = await askForLineLayout({provider: "ollama", model: "m", spec: inserterPlan, data, fetchFn})
+    assert.ok(r.ok, (r.errors || []).join("; "))
+    assert.equal(seen.length, 2)
+    assert.match(seen[1].messages.at(-1).content, /more machines than needed/)
+    assert.match(seen[1].messages.at(-1).content, /are enough with/)
+    assert.deepEqual(r.params.east.stages.map(s => s.machines), good.east.stages.map(s => s.machines))
+})
+
+await test("a model that keeps too many machines still gets its last working layout back", async () => {
+    let good = defaultLineParams(inserterPlan, data)
+    let weaken = s => ({...s, machines: s.machines + 2, inputInserter: "fast-inserter", inputInserters: 1})
+    let weak = {...good, east: {...good.east, stages: [weaken(good.east.stages[0]), good.east.stages[1]]}}
+    let {fetchFn} = lineFetch([lineReply(weak), "{}"])
+    let r = await askForLineLayout({provider: "ollama", model: "m", spec: inserterPlan, data, fetchFn, maxAttempts: 2})
+    assert.ok(r.ok, (r.errors || []).join("; "))
+})
+
 await test("a line task tells the model each stage, the belts and the feeders", () => {
     let task = describeLineTask(inserterPlan, data)
     assert.equal(task.task, "line")

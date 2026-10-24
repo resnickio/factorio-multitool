@@ -115,3 +115,17 @@ SAMPLES["advanced-circuits-plastic"] = {
         west: [{recipe: "electronic-circuit", machine: "assembling-machine-2"}],
     },
 }
+
+// Two assembling machine 1 of inserters, as the calculator might count them:
+// the inserters beside the machines are the limit, so more machines are needed.
+SAMPLES["inserters-two-asm1"] = {
+    rate: 2,
+    line: {
+        root: {recipe: "inserter", machine: "assembling-machine-1"},
+        east: [
+            {recipe: "electronic-circuit", machine: "assembling-machine-1"},
+            {recipe: "copper-cable", machine: "assembling-machine-1"},
+        ],
+        west: [{recipe: "iron-gear-wheel", machine: "assembling-machine-1"}],
+    },
+}
