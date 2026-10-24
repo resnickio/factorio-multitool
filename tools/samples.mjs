@@ -104,3 +104,14 @@ SAMPLES["inserters-from-plates"] = {
 }
 
 export const DEFAULT_MACHINE = "electric-furnace"
+
+// Plastic made from coal and petroleum gas (a fluid, piped in beside its coal
+// belt) and circuits, with the cable brought in on a feeder.
+SAMPLES["advanced-circuits-plastic"] = {
+    rate: 1,
+    line: {
+        root: {recipe: "advanced-circuit", machine: "assembling-machine-2"},
+        east: [{recipe: "plastic-bar", machine: "chemical-plant"}],
+        west: [{recipe: "electronic-circuit", machine: "assembling-machine-2"}],
+    },
+}

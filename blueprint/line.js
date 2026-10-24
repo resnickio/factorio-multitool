@@ -34,7 +34,8 @@
 // at the tile they pick up from.
 
 import {
-    entityInfo, lookupRecipe, insertRows, fluidIngredients, beltThroughput, machineCrafts,
+    entityInfo, lookupRecipe, insertRows, fluidIngredients, fluidInputPorts, STEP, opposite,
+    beltThroughput, machineCrafts,
     ALLOWED_INSERTERS, ALLOWED_LONG_INSERTERS, NORTH, SOUTH, EAST, WEST,
 } from "./entities.js"
 import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
@@ -178,12 +179,14 @@ export function lineIneligibleReason(spec, data) {
     } catch (e) {
         return e.message
     }
-    let check = (recipeKey, machine, maxSolids) => {
+    // Only the outermost stage of a branch can take a fluid: its pipes run
+    // out past its supply belt, where nothing is in the way.
+    let check = (recipeKey, machine, maxSolids, fluidOk = false) => {
         let reason = ineligibleReason(data, recipeKey, machine, maxSolids)
         if (reason) {
             return reason
         }
-        if (fluidIngredients(data, lookupRecipe(data, recipeKey)).length > 0) {
+        if (!fluidOk && fluidIngredients(data, lookupRecipe(data, recipeKey)).length > 0) {
             return `${lookupRecipe(data, recipeKey).localized_name.en} uses a fluid, which lines do not handle yet`
         }
         return null
@@ -200,7 +203,7 @@ export function lineIneligibleReason(spec, data) {
             return `a branch can have at most ${MAX_STAGES} stages`
         }
         for (let [j, stage] of spec[side].entries()) {
-            reason = check(stage.recipe, stage.machine, 2)
+            reason = check(stage.recipe, stage.machine, 2, j === spec[side].length - 1)
             if (reason) {
                 return reason
             }
@@ -335,6 +338,9 @@ function placeBranch(add, requests, params, resolved, side, data, poleStep, outB
     let direction = sign > 0 ? EAST : WEST
     let outBelt = outBelt0
     let supplyX = null
+    let fluidSupplies = []
+    let solidSupply = null
+    let fluidStage = false
     for (let j = 0; j < n; j++) {
         let stage = branch.stages[j]
         let size = sizes[j]
@@ -343,25 +349,58 @@ function placeBranch(add, requests, params, resolved, side, data, poleStep, outB
         let inIns = sign > 0 ? outBelt + 2 + size : outBelt - 2 - size
         let inBelt = outBelt + sign * (3 + size)
         let isAssembler = entityInfo(data, stage.machine).type === "assembling-machine"
+        // The outermost stage may take fluids: its machines face their fluid
+        // inputs at the supply belt, and reach a collector pipe beyond it by a
+        // pair of underground pipes passing under the belt (see columns.js).
+        let recipe = lookupRecipe(data, stage.recipe)
+        let fluids = j === n - 1 ? fluidIngredients(data, recipe) : []
+        let hasSolids = fluids.length < recipe.ingredients.length
+        let facing = fluids.length === 0 ? NORTH : direction
+        let ports = fluids.length === 0 ? [] : fluidInputPorts(entityInfo(data, stage.machine), facing).slice(0, fluids.length)
+        let inRows = insertRows(size, new Set(ports.map(p => p.ty))).slice(0, stage.inputInserters)
         for (let i = 0; i < stage.machines; i++) {
             let my = y0[j] + i * size
-            add(stage.machine, machineX, my, NORTH, isAssembler ? {recipe: stage.recipe} : {})
+            add(stage.machine, machineX, my, facing, isAssembler ? {recipe: stage.recipe} : {})
             for (let row of insertRows(size, new Set()).slice(0, stage.outputInserters)) {
                 add(stage.outputInserter, outIns, my + row, direction)
             }
-            for (let row of insertRows(size, new Set()).slice(0, stage.inputInserters)) {
+            for (let row of hasSolids ? inRows : []) {
                 add(stage.inputInserter, inIns, my + row, direction)
             }
+            ports.forEach((port, k) => {
+                let entryX = machineX + port.outX
+                let exitX = entryX + STEP[port.facing][0] * (2 + 2 * k)
+                add(params.pipeToGround || "pipe-to-ground", entryX, my + port.outY, opposite(port.facing))
+                add(params.pipeToGround || "pipe-to-ground", exitX, my + port.outY, port.facing)
+            })
         }
+        ports.forEach((port, k) => {
+            let collectorX = machineX + port.outX + STEP[port.facing][0] * (3 + 2 * k)
+            fluidSupplies.push({x: collectorX, y: -1, fluid: fluids[k].name})
+            for (let py = -1; py < y0[j] + rows[j]; py++) {
+                add(params.pipe || "pipe", collectorX, py, NORTH)
+            }
+        })
         for (let i = 0; i < stage.machines; i += poleStep) {
-            add(params.pole, outIns, y0[j] + i * size + size - 1, NORTH)
-            add(params.pole, inIns, y0[j] + i * size + size - 1, NORTH)
+            let my = y0[j] + i * size
+            add(params.pole, outIns, my + size - 1, NORTH)
+            // With fluids the input side has no free tile beside the inserters,
+            // so the pole goes outside the fluid connections.
+            if (fluids.length === 0) {
+                add(params.pole, inIns, my + size - 1, NORTH)
+            } else {
+                add(params.pole, inIns + sign * 2, my + Math.floor(size / 2), NORTH)
+            }
+        }
+        if (j === n - 1) {
+            solidSupply = hasSolids ? recipe.ingredients.filter(i => !fluids.includes(i)).map(i => i.name) : null
+            fluidStage = fluids.length > 0
         }
         // This stage's input belt: the next stage in puts its output on it, so
         // it starts at that stage's first row; the outermost starts at its own.
         let beltTier = j === n - 1 ? branch.supply : branch.belts[j]
         let from = j === n - 1 ? 0 : y0[j + 1]
-        for (let by = from; by < y0[j] + rows[j]; by++) {
+        for (let by = from; by < y0[j] + rows[j] && (hasSolids || j < n - 1); by++) {
             add(beltTier, inBelt, by, SOUTH)
         }
         // An extra ingredient arrives on the lane the next stage in does not use.
@@ -372,11 +411,18 @@ function placeBranch(add, requests, params, resolved, side, data, poleStep, outB
         outBelt = inBelt
         supplyX = inBelt
     }
-    // The outermost stage's supply arrives on a feeder at its first row.
-    for (let k = 1; k <= 2; k++) {
-        add(branch.supply, supplyX + sign * k, 0, sign > 0 ? WEST : EAST)
+    // The outermost stage's supply arrives on a feeder at its first row; with
+    // fluid pipes in the way there, on a row of its own above the layout.
+    let supplyInput = null
+    if (solidSupply && fluidStage) {
+        requests.push({from: side, targetX: supplyX, topY: 0, tier: branch.supply, items: solidSupply, belt: branch.supply})
+    } else if (solidSupply) {
+        for (let k = 1; k <= 2; k++) {
+            add(branch.supply, supplyX + sign * k, 0, sign > 0 ? WEST : EAST)
+        }
+        supplyInput = {x: supplyX + sign * 2, y: 0, items: solidSupply}
     }
-    return {rows: y, feederEnd: supplyX + sign * 2, stage0Top: y0[0]}
+    return {rows: y, supplyInput, fluidSupplies, fluidStage, stage0Top: y0[0]}
 }
 
 function place(params, spec, data, poleStep) {
@@ -391,6 +437,8 @@ function place(params, spec, data, poleStep) {
     let stage0Top = {east: 0, west: 0}
     let inputs = []
     let requests = []
+    let fluids = []
+    let fluidSide = {east: false, west: false}
     for (let side of SIDES) {
         if (spec[side].length === 0) {
             continue
@@ -399,8 +447,11 @@ function place(params, spec, data, poleStep) {
         let placed = placeBranch(add, requests, params, resolved, side, data, poleStep, side === "east" ? m - 1 : 0)
         rows[side] = placed.rows
         stage0Top[side] = placed.stage0Top
-        let outermost = resolved.stages[side].at(-1)
-        inputs.push({x: placed.feederEnd, y: 0, items: lookupRecipe(data, outermost.recipe).ingredients.map(i => i.name)})
+        if (placed.supplyInput) {
+            inputs.push(placed.supplyInput)
+        }
+        fluids.push(...placed.fluidSupplies)
+        fluidSide[side] = placed.fluidStage
     }
 
     // The final recipe's machines, west of MID and below both branches.
@@ -453,7 +504,10 @@ function place(params, spec, data, poleStep) {
         let list = requests.filter(r => r.from === from)
         list.sort((a, b) => from === "east" ? a.targetX - b.targetX : b.targetX - a.targetX)
         list.forEach((r, i) => {
-            let row = -1 - 2 * (list.length - 1 - i)
+            // Collector pipes reach row -1, and their fluid connects above
+            // that: the feeders on that side stay clear of both.
+            let clear = fluidSide[from] ? 2 : 0
+            let row = -1 - clear - 2 * (list.length - 1 - i)
             let dir = from === "east" ? WEST : EAST
             let step = from === "east" ? 1 : -1
             for (let tx = r.targetX + step; from === "east" ? tx <= extent.east : tx >= extent.west; tx += step) {
@@ -489,7 +543,7 @@ function place(params, spec, data, poleStep) {
         connections: {
             inputs,
             output: {x: x.outBelt, y: startY + rootRows - 1, item: rootRecipe.results[0].name},
-            fluids: [],
+            fluids,
         },
     }
 }

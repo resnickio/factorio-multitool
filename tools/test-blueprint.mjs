@@ -780,6 +780,47 @@ await test("a three-ingredient final recipe needs a wide enough machine", () => 
     assert.equal(lineIneligibleReason(spec, data), null)
 })
 
+const plasticPlan = {
+    root: {recipe: "advanced-circuit", machine: ASM2, rate: 1},
+    east: [{recipe: "plastic-bar", machine: "chemical-plant"}],
+    west: [{recipe: "electronic-circuit", machine: ASM2}],
+}
+
+await test("the outermost stage of a branch may take a fluid, an inner one may not", () => {
+    assert.equal(lineIneligibleReason(plasticPlan, data), null)
+    // Batteries (with sulfuric acid) as the inner stage would put pipes among the belts.
+    let inner = {root: {recipe: "accumulator", machine: ASM2, rate: 1}, east: [{recipe: "battery", machine: "chemical-plant"}, {recipe: "copper-plate", machine: F}], west: []}
+    assert.match(lineIneligibleReason(inner, data), /uses a fluid/)
+    // A fluid in the final recipe is still refused.
+    let root = {root: {recipe: "battery", machine: "chemical-plant", rate: 1}, east: [{recipe: "copper-plate", machine: F}], west: [{recipe: "iron-plate", machine: F}]}
+    assert.match(lineIneligibleReason(root, data), /uses a fluid/)
+})
+
+await test("a fluid stage's pipes run beside its supply belt, which comes in above them", () => {
+    let {result} = line(plasticPlan)
+    assert.deepEqual(result.errors, [])
+    assert.ok(result.ok)
+    let c = result.connections
+    assert.deepEqual(c.fluids.map(f => f.fluid), ["petroleum-gas"])
+    // The collector pipe is further out than the supply belt, and the coal feeder
+    // passes above where the fluid connects.
+    let plants = result.entities.filter(e => e.name === "chemical-plant")
+    let belt = Math.max(...plants.map(e => e.x)) + 4
+    assert.ok(c.fluids[0].x > belt)
+    let coal = c.inputs.find(i => i.items.join() === "coal")
+    assert.ok(coal.y < c.fluids[0].y - 1)
+    assert.ok(plants.every(e => e.direction === 4))
+    assert.ok(result.entities.some(e => e.name === "pipe-to-ground"))
+    assert.deepEqual(validateLayout(result.entities, data).errors, [])
+})
+
+await test("a fluid line's solid inputs exclude the fluid", () => {
+    let {result} = line(plasticPlan)
+    for (let input of result.connections.inputs) {
+        assert.ok(!input.items.includes("petroleum-gas"))
+    }
+})
+
 // The reply a model would give for these line parameters.
 const lineReply = p => {
     let stage = s => ({machines: s.machines, input_inserter: s.inputInserter, output_inserter: s.outputInserter,

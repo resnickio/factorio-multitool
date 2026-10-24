@@ -274,7 +274,8 @@ function showPreview(box) {
 // producers (one producer is a chain), with whether each can be built.
 function lineRequirements(reqs) {
     let lines = []
-    let producerOf = item => reqs.filter(r => r.recipe.products[0].item === item)
+    // Fluids are piped in, so nothing can be a stage making one.
+    let producerOf = item => item.phase === "fluid" ? [] : reqs.filter(r => r.recipe.products[0].item === item)
     let MAX_STAGES = 2
     for (let root of reqs) {
         let branches = []
@@ -295,7 +296,8 @@ function lineRequirements(reqs) {
                     return p ? 1 + Math.max(0, ...p.recipe.ingredients.map(i => depth(i.item, [...seen, p]))) : 0
                 }
                 let next = null
-                if (producer.recipe.ingredients.length <= 2) {
+                // A stage with a fluid can only be the outermost.
+                if (producer.recipe.ingredients.length <= 2 && !producer.recipe.ingredients.some(i => i.item.phase === "fluid")) {
                     let best = 0
                     for (let i of producer.recipe.ingredients) {
                         let d = depth(i.item, [...stages, producer])
@@ -314,10 +316,19 @@ function lineRequirements(reqs) {
                 branches.push(stages)
             }
         }
-        // Only two branches fit; the longer ones are worth more.
+        // Only two branches fit; the longer ones are worth more. A row can only
+        // be in one branch.
+        let used = new Set()
         branches = branches
             .map((stages, i) => ({stages, i}))
             .sort((x, y) => y.stages.length - x.stages.length || x.i - y.i)
+            .filter(({stages}) => {
+                if (stages.some(s => used.has(s))) {
+                    return false
+                }
+                stages.forEach(s => used.add(s))
+                return true
+            })
             .slice(0, 2)
             .sort((x, y) => x.i - y.i)
             .map(x => x.stages)
@@ -428,6 +439,12 @@ function renderLineResult(box) {
     box.append("div")
         .classed("hint", true)
         .text(`Supply ${supplies.join("; ")}. Take ${output.connections.output.item} from the bottom of the belt on the far left. Modules are not included.`)
+    if (output.connections.fluids.length > 0) {
+        let names = output.connections.fluids.map(f => (spec.items.get(f.fluid) ? spec.items.get(f.fluid).name : f.fluid))
+        box.append("div")
+            .classed("hint", true)
+            .text(`Connect ${names.join(" and ")} to the top of the vertical pipe${names.length > 1 ? "s" : ""} marked in the picture, beyond the outermost machines.`)
+    }
     showPreview(box)
     box.append("textarea")
         .classed("blueprint-text", true)
