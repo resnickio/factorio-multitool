@@ -52,7 +52,25 @@ const deflate = bytes => new Uint8Array(zlib.deflateSync(bytes, {level: 9}))
 // Works out the layout to build: its entities, connection points, the recipes
 // to unlock, and the product to measure.
 let layout
-if (sample.chain) {
+if (sample.line) {
+    const { defaultLineParams, buildLineBlueprint } = await import("../blueprint/line.js")
+    let spec = {root: {...sample.line.root, rate: sample.rate}, east: sample.line.east, west: sample.line.west}
+    let params = defaultLineParams(spec, data)
+    let result = buildLineBlueprint(params, spec, data)
+    if (!result.ok) {
+        console.log("line rejected:\n" + result.errors.join("\n"))
+        process.exit(1)
+    }
+    console.log("line layout:", JSON.stringify(params))
+    layout = {
+        entities: result.entities,
+        connections: result.connections,
+        blueprint: encodeBlueprint(result.blueprint, deflate),
+        recipes: [spec.root.recipe, ...spec.east.map(s => s.recipe), ...spec.west.map(s => s.recipe)],
+        product: data.recipes.find(r => r.key === spec.root.recipe).results[0].name,
+        target: sample.rate,
+    }
+} else if (sample.chain) {
     const { defaultChainParams, buildChainBlueprint } = await import("../blueprint/chain.js")
     const { askForChainLayout } = await import("../blueprint/llm.js")
     let requirement = {recipe: sample.chain.downstream, rate: sample.rate, upstream: sample.chain.upstream}

@@ -8,6 +8,7 @@ import { placeColumns } from "../blueprint/columns.js"
 import { validateParams, validateLayout } from "../blueprint/validate.js"
 import { previewLayout } from "../blueprint/build.js"
 import { previewModel } from "../blueprint/preview.js"
+import { resolveLine, lineIneligibleReason, validateLine, defaultLineParams, buildLineBlueprint } from "../blueprint/line.js"
 import { askForLayout, askForChainLayout, listOllamaModels } from "../blueprint/llm.js"
 import { EAST } from "../blueprint/entities.js"
 import {
@@ -625,6 +626,124 @@ await test("the validator reports an unknown feeder belt instead of crashing", (
     let good = defaultChainParams(chainReq, chainMachines, data)
     let v = validateChain({...good, supply: "wooden-chest"}, chainReq, data)
     assert.ok(v.errors.some(e => /supply belt/.test(e)), v.errors.join("; "))
+})
+
+const ASM2 = "assembling-machine-2"
+const orePlan = {
+    root: {recipe: "electronic-circuit", machine: ASM2, rate: 3},
+    east: [{recipe: "copper-cable", machine: ASM2}, {recipe: "copper-plate", machine: F}],
+    west: [{recipe: "iron-plate", machine: F}],
+}
+const line = (spec = orePlan) => {
+    let params = defaultLineParams(spec, data)
+    return {params, result: buildLineBlueprint(params, spec, data)}
+}
+
+await test("a line's stages are sized back from the final recipe", () => {
+    let r = resolveLine(orePlan, data)
+    // 3 circuits a second need 9 cables and 3 iron plates; 9 cables need 4.5 copper plates.
+    assert.deepEqual(r.stages.east.map(s => [s.recipe, s.rate]), [["copper-cable", 9], ["copper-plate", 4.5]])
+    assert.deepEqual(r.stages.west.map(s => [s.recipe, s.rate]), [["iron-plate", 3]])
+    assert.deepEqual(r.external, {east: null, west: null})
+})
+
+await test("an ingredient with no branch arrives on a feeder", () => {
+    let r = resolveLine({...orePlan, west: []}, data)
+    assert.equal(r.external.west.item, "iron-plate")
+    assert.equal(r.external.west.rate, 3)
+    let other = resolveLine({...orePlan, east: [], west: [orePlan.east[0]]}, data)
+    assert.equal(other.external.east.item, "iron-plate")
+})
+
+await test("a line from ore to circuits is accepted", () => {
+    let {params, result} = line()
+    assert.deepEqual(result.errors, [])
+    assert.ok(result.ok)
+    assert.equal(result.blueprint.entities.filter(e => e.recipe === "electronic-circuit").length, params.root.machines)
+    assert.equal(result.blueprint.entities.filter(e => e.recipe === "copper-cable").length, params.east.stages[0].machines)
+    assert.equal(result.blueprint.entities.filter(e => e.name === F).length, params.east.stages[1].machines + params.west.stages[0].machines)
+    console.log("\n" + previewLayout(result.entities, data).split("\n").slice(0, 10).join("\n") + "\n")
+})
+
+await test("only the raw inputs and the product are connection points of a line", () => {
+    let {result} = line()
+    let c = result.connections
+    assert.equal(c.inputs.length, 2)
+    assert.deepEqual(c.inputs.map(i => i.items).sort(), [["copper-ore"], ["iron-ore"]])
+    // One feeder is on each side of the layout.
+    assert.ok(c.inputs.some(i => i.x > 0) && c.inputs.some(i => i.x < 0))
+    assert.equal(c.output.item, "electronic-circuit")
+})
+
+await test("stages in a branch step outward and share their belt", () => {
+    let {params, result} = line()
+    let cable = result.entities.filter(e => e.recipe === "copper-cable")
+    let furnaces = result.entities.filter(e => e.name === F && e.x > 0)
+    // Copper furnaces are further east than the cable machines, and above them.
+    assert.ok(Math.min(...furnaces.map(e => e.x)) > Math.max(...cable.map(e => e.x)))
+    assert.ok(Math.max(...furnaces.map(e => e.y)) < Math.min(...cable.map(e => e.y)))
+    // The belt between them spans both stages' rows.
+    let between = result.entities.filter(e => /transport-belt/.test(e.name) && e.x === Math.max(...cable.map(m => m.x)) + 4)
+    assert.ok(between.length >= params.east.stages[0].machines * 3 + params.east.stages[1].machines * 3)
+    // The final recipe sits west of MID and below both branches.
+    let circuits = result.entities.filter(e => e.recipe === "electronic-circuit")
+    assert.ok(circuits.every(e => e.x < 0))
+    let westRows = Math.max(...result.entities.filter(e => e.name === F && e.x < 0).map(e => e.y + e.h))
+    assert.ok(Math.min(...circuits.map(e => e.y)) > westRows)
+})
+
+await test("each side's inserters point as its machines face, and the layout validates", () => {
+    let {result} = line()
+    assert.deepEqual(validateLayout(result.entities, data).errors, [])
+    let east = result.entities.filter(e => e.name === F && e.x > 0)
+    let eastInserters = result.entities.filter(e => /inserter/.test(e.name) && e.x > 0)
+    assert.ok(eastInserters.every(e => e.direction === 4))
+    let westStage = result.entities.filter(e => /inserter/.test(e.name) && e.x < 0 && e.y < Math.min(...result.entities.filter(m => m.recipe === "electronic-circuit").map(m => m.y)))
+    assert.ok(westStage.length > 0 && westStage.every(e => e.direction === 12))
+    assert.ok(east.length > 0)
+})
+
+await test("a line with a feeder and one branch is a three-stage chain", () => {
+    let spec = {...orePlan, west: []}
+    let {result} = line(spec)
+    assert.deepEqual(result.errors, [])
+    let feeder = result.entities.filter(e => /transport-belt/.test(e.name) && e.y === -1 && e.x > 0)
+    assert.ok(feeder.length > 3 && feeder.every(e => e.direction === 12))
+    assert.deepEqual(result.connections.inputs.map(i => i.items).sort(), [["copper-ore"], ["iron-plate"]])
+})
+
+await test("a line whose west branch is the only one feeds the other ingredient from the west", () => {
+    let spec = {root: orePlan.root, east: [], west: [orePlan.east[0], {recipe: "copper-plate", machine: F}]}
+    let {result} = line(spec)
+    assert.deepEqual(result.errors, [])
+    let feeder = result.entities.filter(e => /transport-belt/.test(e.name) && e.y === -1 && e.x < 0)
+    assert.ok(feeder.length > 3 && feeder.every(e => e.direction === 4))
+})
+
+await test("lines say why they cannot be built", () => {
+    assert.equal(lineIneligibleReason(orePlan, data), null)
+    assert.match(lineIneligibleReason({...orePlan, east: [], west: []}, data), /at least one branch/)
+    assert.match(lineIneligibleReason({...orePlan, west: [{recipe: "iron-gear-wheel", machine: ASM2}]}, data), /does not use/)
+    assert.match(lineIneligibleReason({...orePlan, east: [orePlan.east[0], orePlan.east[1], {recipe: "iron-plate", machine: F}]}, data), /at most 2/)
+    // A stage between others can only take its product from the next one.
+    let gearBetween = {root: {recipe: "electronic-circuit", machine: ASM2, rate: 3}, east: [{recipe: "electronic-circuit", machine: ASM2}, orePlan.east[0]], west: []}
+    assert.ok(lineIneligibleReason(gearBetween, data))
+})
+
+await test("the shared belt is checked for each ingredient's lane in a line", () => {
+    let {params} = line()
+    let v = validateLine({...params, mid: "transport-belt"}, {...orePlan, root: {...orePlan.root, rate: 6}}, data)
+    assert.ok(v.errors.length > 0)
+    let small = validateLine(params, orePlan, data)
+    assert.deepEqual(small.errors, [])
+})
+
+await test("a line's blueprint wires its poles and round-trips", () => {
+    let {result} = line()
+    let poles = result.blueprint.entities.filter(e => /pole/.test(e.name)).length
+    assert.equal(result.blueprint.wires.length, poles - 1)
+    let back = decodeBlueprint(encodeBlueprint(result.blueprint, deflate), inflate).blueprint
+    assert.equal(back.entities.length, result.entities.length)
 })
 
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)

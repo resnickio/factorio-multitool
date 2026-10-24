@@ -6,6 +6,7 @@ import { askForLayout, askForChainLayout, listOllamaModels, OLLAMA_URL } from ".
 import { entityInfo, lookupRecipe, machineCrafts } from "./blueprint/entities.js"
 import { chainIneligibleReason, defaultChainParams, buildChainBlueprint } from "./blueprint/chain.js"
 import { renderPreview } from "./blueprint_preview.js"
+import { lineIneligibleReason, defaultLineParams, buildLineBlueprint } from "./blueprint/line.js"
 
 // The Blueprint tab: turns the furnace and assembler rows in the current
 // solution into blueprint strings for the game, singly or as chains.
@@ -15,6 +16,8 @@ const DEFAULT_MODELS = {anthropic: "claude-sonnet-5-5", ollama: "qwen3.8:latest"
 let selected = null
 // A chain of two rows, by recipe key: {up, down}.
 let selectedChain = null
+// A line, by key (see lineKey).
+let selectedLine = null
 // "none" (build with the cheapest parts which work), "anthropic" or "ollama".
 let provider = "none"
 // The key is kept only in this page, and never stored or put in the link.
@@ -177,6 +180,10 @@ function renderResult(root) {
         renderChainResult(box)
         return
     }
+    if (output.line) {
+        renderLineResult(box)
+        return
+    }
     if (output.params) {
         let p = output.params
         let attempts = output.attempts > 0 ? ` (accepted after ${output.attempts} ${output.attempts === 1 ? "attempt" : "attempts"})` : ""
@@ -260,6 +267,135 @@ function showPreview(box) {
     details.append("div")
         .classed("hint", true)
         .text("Belts flow down (v) or west (<); ) and ( are inserters, F furnaces, A assemblers, P poles, = pipes, O underground pipes.")
+}
+
+// Lines: a recipe in the factory together with the rows which make its
+// ingredients, and what makes those. Returns the ones with at least two
+// producers (one producer is a chain), with whether each can be built.
+function lineRequirements(reqs) {
+    let lines = []
+    let producerOf = item => reqs.filter(r => r.recipe.products[0].item === item)
+    let MAX_STAGES = 2
+    for (let root of reqs) {
+        let branches = []
+        for (let ing of root.recipe.ingredients) {
+            // Follow single-ingredient producers inward, up to two stages.
+            let stages = []
+            let item = ing.item
+            while (stages.length < MAX_STAGES) {
+                let producer = producerOf(item).find(p => p !== root && !stages.includes(p))
+                if (!producer) {
+                    break
+                }
+                stages.push(producer)
+                // The next stage out is only possible if this one has one ingredient.
+                if (producer.recipe.ingredients.length !== 1) {
+                    break
+                }
+                item = producer.recipe.ingredients[0].item
+            }
+            if (stages.length > 0) {
+                branches.push(stages)
+            }
+        }
+        // A producer with several ingredients can only be the outermost stage.
+        branches = branches.map(stages => {
+            let cut = stages.findIndex((s, j) => j < stages.length - 1 && s.recipe.ingredients.length !== 1)
+            return cut === -1 ? stages : stages.slice(0, cut + 1)
+        })
+        branches = branches.slice(0, 2)
+        let total = branches.reduce((n, b) => n + b.length, 0)
+        if (branches.length === 0 || total < 2) {
+            continue
+        }
+        let lineSpec = {
+            root: {recipe: root.recipe.key, machine: root.building.key, rate: root.rate},
+            east: (branches[0] || []).map(s => ({recipe: s.recipe.key, machine: s.building.key})),
+            west: (branches[1] || []).map(s => ({recipe: s.recipe.key, machine: s.building.key})),
+        }
+        lines.push({root, east: branches[0] || [], west: branches[1] || [], spec: lineSpec, reason: lineIneligibleReason(lineSpec, spec.data)})
+    }
+    return lines
+}
+
+function lineKey(line) {
+    return [line.spec.root.recipe, line.spec.east.map(s => s.recipe).join("+"), line.spec.west.map(s => s.recipe).join("+")].join("|")
+}
+
+function isSelectedLine(line) {
+    return selectedLine !== null && selectedLine === lineKey(line)
+}
+
+async function generateLine(line) {
+    busy = true
+    output = {pending: true}
+    renderBlueprint()
+    try {
+        let params = defaultLineParams(line.spec, spec.data)
+        output = {...buildLineBlueprint(params, line.spec, spec.data), line: {spec: line.spec, params}}
+    } catch (e) {
+        output = {failed: e.message}
+    }
+    if (output.ok) {
+        output.text = encodeBlueprint(output.blueprint, deflate)
+        output.preview = previewLayout(output.entities, spec.data)
+    }
+    busy = false
+    renderBlueprint()
+}
+
+function renderLineResult(box) {
+    let {spec: lineSpec, params} = output.line
+    let name = key => lookupRecipe(spec.data, key).localized_name.en
+    let parts = []
+    for (let side of ["west", "east"]) {
+        for (let stage of [...params[side].stages].reverse()) {
+            parts.push(`${stage.machines} × ${stage.machine} (${name(stage.recipe)})`)
+        }
+    }
+    parts.push(`${params.root.machines} × ${params.root.machine} (${name(lineSpec.root.recipe)})`)
+    box.append("div")
+        .text(`${parts.join("; ")}; shared belt ${params.mid}.`)
+    if (!output.ok) {
+        box.append("div")
+            .classed("blueprint-error", true)
+            .text("This layout was rejected, so no blueprint was made:")
+        let list = box.append("ul")
+        for (let e of output.errors) {
+            list.append("li")
+                .text(e)
+        }
+        return
+    }
+    if (output.warnings.length > 0) {
+        let list = box.append("ul")
+        for (let w of output.warnings) {
+            list.append("li")
+                .text(w)
+        }
+    }
+    let supplies = output.connections.inputs.map(input => {
+        let item = input.items.map(i => (spec.items.get(i) ? spec.items.get(i).name : i)).join(" and ")
+        return `${item} at the ${input.x > 0 ? "right" : "left"} end of the belt marked in the picture`
+    })
+    box.append("div")
+        .classed("hint", true)
+        .text(`Supply ${supplies.join("; ")}. Take ${output.connections.output.item} from the bottom of the belt on the far left. Modules are not included.`)
+    showPreview(box)
+    box.append("textarea")
+        .classed("blueprint-text", true)
+        .attr("readonly", true)
+        .attr("rows", 4)
+        .property("value", output.text)
+        .on("focus", function() {
+            this.select()
+        })
+    box.append("button")
+        .text("Copy blueprint string")
+        .on("click", () => copyText(output.text))
+    box.append("span")
+        .classed("hint", true)
+        .text(" In the game, click the import-string button in the blueprint library and paste it.")
 }
 
 function renderChainResult(box) {
@@ -509,6 +645,7 @@ export function renderBlueprint() {
                 .on("click", () => {
                     selected = req.recipe
                     selectedChain = null
+                    selectedLine = null
                     output = null
                     renderBlueprint()
                 })
@@ -540,11 +677,69 @@ export function renderBlueprint() {
                     .text("Choose")
                     .on("click", () => {
                         selectedChain = {up: chain.up.recipe.key, down: chain.down.recipe.key}
+                        selectedLine = null
                         selected = null
                         output = null
                         renderBlueprint()
                     })
             }
+        }
+    }
+
+    let lines = lineRequirements(reqs)
+    if (lines.length > 0) {
+        root.append("p")
+            .text("Lines: a recipe with the rows that make its ingredients, and what makes those, on either side of one shared belt, so only the raw inputs have to be brought in.")
+        let lineTable = root.append("table")
+            .classed("blueprint-list", true)
+        for (let line of lines) {
+            let row = lineTable.append("tr")
+                .classed("selected", isSelectedLine(line))
+            let icons = row.append("td")
+            let order = [...line.west].reverse().concat([...line.east].reverse(), [line.root])
+            order.forEach((r, i) => {
+                if (i > 0) {
+                    icons.append("span")
+                        .text(" → ")
+                }
+                icons.append(() => r.recipe.icon.make(32))
+            })
+            row.append("td")
+                .text(order.map(r => r.recipe.name).join(" → "))
+            row.append("td")
+                .classed("hint", !!line.reason)
+                .text(line.reason || `${line.root.rate.toFixed(2)}/s of ${line.root.recipe.products[0].item.name}`)
+            let cell = row.append("td")
+            if (!line.reason) {
+                cell.append("button")
+                    .text("Choose")
+                    .on("click", () => {
+                        selectedLine = lineKey(line)
+                        selectedChain = null
+                        selected = null
+                        output = null
+                        renderBlueprint()
+                    })
+            }
+        }
+    }
+
+    if (selectedLine !== null) {
+        let line = lines.find(isSelectedLine)
+        if (line && !line.reason) {
+            let panel = root.append("div")
+                .classed("blueprint-panel", true)
+            panel.append("h3")
+                .text(`Blueprint for ${line.root.recipe.name} and what feeds it`)
+            panel.append("div")
+                .classed("hint", true)
+                .text("Lines are built from the cheapest parts which carry the load.")
+            panel.append("button")
+                .property("disabled", busy)
+                .text("Generate")
+                .on("click", () => generateLine(line))
+            renderResult(panel)
+            return
         }
     }
 
