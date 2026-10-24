@@ -107,15 +107,18 @@ if (sample.line) {
     let machines = {upstream: sample.chain.upstreamMachine, downstream: sample.chain.downstreamMachine}
     let params, result
     if (args.model) {
-        result = await askForChainLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machines, data})
+        result = await askForChainLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machines, data, exact: args.exact === "true"})
         console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
         params = result.params
         if (params && params.notes) {
             console.log("model's notes:", params.notes)
         }
     } else {
-        params = defaultChainParams(requirement, machines, data)
+        params = defaultChainParams(requirement, machines, data, {exact: args.exact === "true"})
         result = buildChainBlueprint(params, requirement, data)
+        for (let w of result.warnings || []) {
+            console.log("warning:", w.slice(0, 200))
+        }
     }
     if (!result.ok) {
         console.log("chain rejected:\n" + result.errors.join("\n"))
@@ -135,7 +138,7 @@ if (sample.line) {
     let requirement = {recipe: sample.recipe, rate: sample.rate}
     let params, result
     if (args.model) {
-        result = await askForLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machine, data})
+        result = await askForLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machine, data, exact: args.exact === "true"})
         console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
         if (!result.ok) {
             console.log(result.errors.join("\n"))
@@ -147,8 +150,11 @@ if (sample.line) {
             console.log("model's notes:", params.notes)
         }
     } else {
-        params = {...defaultParams(requirement, machine, data), ...sample.override}
+        params = {...defaultParams(requirement, machine, data, {exact: args.exact === "true"}), ...sample.override}
         result = buildColumnBlueprint(params, requirement, data)
+        for (let w of result.warnings || []) {
+            console.log("warning:", w.slice(0, 200))
+        }
         if (!result.ok) {
             console.log("layout rejected:\n" + result.errors.join("\n"))
             process.exit(1)

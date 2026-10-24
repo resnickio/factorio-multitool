@@ -38,7 +38,7 @@ import {
     beltThroughput, machineCrafts,
     allowedInserters, ALLOWED_LONG_INSERTERS, NORTH, SOUTH, EAST, WEST,
 } from "./entities.js"
-import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
+import { validateParams, validateLayout, ineligibleReason, exactCountWarning } from "./validate.js"
 import { defaultParams } from "./dsl.js"
 import { makeBlueprint } from "./build.js"
 
@@ -342,7 +342,7 @@ export function validateLine(params, spec, data) {
         let [part, fraction] = fractions.reduce((a, b) => (b[1] < a[1] ? b : a))
         stats.estimatedRate = spec.root.rate * fraction
         if (fraction < 1 - 1e-9) {
-            warnings.unshift(`Exact machine counts: the inserters at ${part} keep its machines at about ${Math.round(fraction * 100)}% of full speed, so the line makes about ${stats.estimatedRate.toFixed(2)}/s of the ${spec.root.rate.toFixed(2)}/s asked for (an estimate from conservative inserter speeds, so likely a little more).`)
+            warnings.unshift(exactCountWarning(part, fraction, spec.root.rate))
         }
     }
     return {errors, warnings, stats}

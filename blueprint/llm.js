@@ -4,7 +4,7 @@
 // Two providers are supported: the Anthropic API (with a key), and a local
 // Ollama server. Both single columns and chains can be asked for.
 
-import { describeTask, SYSTEM_PROMPT, parseReply, buildColumnBlueprint, defaultParams } from "./dsl.js"
+import { describeTask, SYSTEM_PROMPT, parseReply, buildColumnBlueprint, defaultParams, fewestMachines } from "./dsl.js"
 import { describeChainTask, CHAIN_SYSTEM_PROMPT, parseChainReply, buildChainBlueprint, defaultChainParams } from "./chain.js"
 import { buildLineBlueprint, defaultLineParams } from "./line.js"
 import { lookupRecipe } from "./entities.js"
@@ -182,15 +182,16 @@ function caller({provider, apiKey, baseUrl, think, model, fetchFn, system}) {
 // plus {params, attempts, log}. The log lists what was said at each step.
 export async function askForLayout({
     provider = "anthropic", apiKey, baseUrl = OLLAMA_URL, think = false,
-    model, requirement, machine, data, maxAttempts = 3, fetchFn = fetch,
+    model, requirement, machine, data, maxAttempts = 3, fetchFn = fetch, exact = false,
 }) {
     return askUntilAccepted({
         call: caller({provider, apiKey, baseUrl, think, model, fetchFn, system: SYSTEM_PROMPT}),
-        task: describeTask(requirement, machine, data),
-        parse: text => ({...parseReply(text), machine}),
+        task: describeTask(requirement, machine, data, {exact}),
+        parse: text => ({...parseReply(text), machine, ...(exact ? {exact: true, machines: fewestMachines(requirement, machine, data)} : {})}),
         build: params => buildColumnBlueprint(params, requirement, data),
         slots: [{label: "machines", get: p => p.machines, set: (p, n) => { p.machines = n }, hint: p => inserterText(p)}],
-        reference: () => defaultParams(requirement, machine, data),
+        reference: () => defaultParams(requirement, machine, data, {exact}),
+        rateOf: exact ? result => (result.stats && result.stats.estimatedRate !== undefined ? result.stats.estimatedRate : Infinity) : null,
         maxAttempts,
     })
 }
@@ -199,12 +200,12 @@ export async function askForLayout({
 // machines is {upstream, downstream}. The result's params are the chain's.
 export async function askForChainLayout({
     provider = "anthropic", apiKey, baseUrl = OLLAMA_URL, think = false,
-    model, requirement, machines, data, maxAttempts = 3, fetchFn = fetch,
+    model, requirement, machines, data, maxAttempts = 3, fetchFn = fetch, exact = false,
 }) {
     return askUntilAccepted({
         call: caller({provider, apiKey, baseUrl, think, model, fetchFn, system: CHAIN_SYSTEM_PROMPT}),
-        task: describeChainTask(requirement, machines, data),
-        parse: text => parseChainReply(text, requirement, machines),
+        task: describeChainTask(requirement, machines, data, {exact}),
+        parse: text => parseChainReply(text, requirement, machines, {exact, data}),
         build: params => buildChainBlueprint(params, requirement, data),
         slots: ["upstream", "downstream"].map(which => ({
             label: lookupRecipe(data, which === "upstream" ? requirement.upstream : requirement.recipe).localized_name.en,
@@ -212,7 +213,8 @@ export async function askForChainLayout({
             set: (p, n) => { p[which].machines = n },
             hint: p => inserterText(p[which]),
         })),
-        reference: () => defaultChainParams(requirement, machines, data),
+        reference: () => defaultChainParams(requirement, machines, data, {exact}),
+        rateOf: exact ? result => (result.stats && result.stats.estimatedRate !== undefined ? result.stats.estimatedRate : Infinity) : null,
         maxAttempts,
     })
 }
