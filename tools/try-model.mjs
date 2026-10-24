@@ -1,7 +1,8 @@
 // Tries a local Ollama model on a few layout tasks and reports how it did.
 //   node tools/try-model.mjs [--model qwen3.8:latest] [--think true]
 import fs from "node:fs"
-import { askForLayout } from "../blueprint/llm.js"
+import { askForLayout, askForChainLayout } from "../blueprint/llm.js"
+import { defaultChainParams } from "../blueprint/chain.js"
 import { defaultParams } from "../blueprint/dsl.js"
 
 const args = {}
@@ -61,3 +62,46 @@ for (let task of TASKS) {
     }
 }
 console.log(`\n${passed}/${TASKS.length} accepted`)
+
+// Chains: an upstream recipe whose product the downstream recipe uses.
+const CHAINS = [
+    {name: "cable -> circuits 3/s, assembling machine 2", requirement: {recipe: "electronic-circuit", rate: 3, upstream: "copper-cable"}, machines: {upstream: "assembling-machine-2", downstream: "assembling-machine-2"}},
+    {name: "cable -> circuits 3/s, assembling machine 1", requirement: {recipe: "electronic-circuit", rate: 3, upstream: "copper-cable"}, machines: {upstream: "assembling-machine-1", downstream: "assembling-machine-1"}},
+    {name: "iron furnaces -> circuits 3/s", requirement: {recipe: "electronic-circuit", rate: 3, upstream: "iron-plate"}, machines: {upstream: "electric-furnace", downstream: "assembling-machine-2"}},
+    {name: "cable -> circuits 8/s, assembling machine 3", requirement: {recipe: "electronic-circuit", rate: 8, upstream: "copper-cable"}, machines: {upstream: "assembling-machine-3", downstream: "assembling-machine-3"}},
+]
+const show = c => `mid ${c.mid}, supply ${c.supply}; up ${c.upstream.machines} (${c.upstream.inputInserters}x${c.upstream.inputInserter} in, ${c.upstream.outputInserters}x${c.upstream.outputInserter} out); down ${c.downstream.machines} (${c.downstream.inputInserters}x${c.downstream.inputInserter} in, ${c.downstream.outputInserters}x${c.downstream.outputInserter} out)`
+let chainsPassed = 0
+for (let task of CHAINS) {
+    let started = Date.now()
+    let result
+    try {
+        result = await askForChainLayout({provider: "ollama", model, think, requirement: task.requirement, machines: task.machines, data, maxAttempts: attempts})
+    } catch (e) {
+        console.log(`\n${task.name}: ERROR ${e.message}`)
+        continue
+    }
+    let seconds = ((Date.now() - started) / 1000).toFixed(1)
+    console.log(`\n${task.name}: ${result.ok ? "ACCEPTED" : "REJECTED"} after ${result.attempts} attempt(s), ${seconds}s`)
+    if (result.ok) {
+        chainsPassed++
+    }
+    if (result.params) {
+        console.log("  model chose: " + show(result.params))
+        console.log("  default:     " + show(defaultChainParams(task.requirement, task.machines, data)))
+        if (result.params.notes) {
+            console.log("  notes: " + result.params.notes)
+        }
+    }
+    if (!result.ok) {
+        for (let e of result.errors) {
+            console.log("  - " + e)
+        }
+    }
+    for (let entry of result.log) {
+        if (entry.errors && entry.errors.length) {
+            console.log(`  attempt ${entry.attempt} rejected: ${entry.errors.join("; ")}`)
+        }
+    }
+}
+console.log(`\n${chainsPassed}/${CHAINS.length} chain tasks accepted`)

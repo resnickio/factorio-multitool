@@ -8,9 +8,12 @@ import { placeColumns } from "../blueprint/columns.js"
 import { validateParams, validateLayout } from "../blueprint/validate.js"
 import { previewLayout } from "../blueprint/build.js"
 import { previewModel } from "../blueprint/preview.js"
-import { askForLayout } from "../blueprint/llm.js"
+import { askForLayout, askForChainLayout, listOllamaModels } from "../blueprint/llm.js"
 import { EAST } from "../blueprint/entities.js"
-import { stageRequirements, chainIneligibleReason, validateChain, defaultChainParams, buildChainBlueprint } from "../blueprint/chain.js"
+import {
+    stageRequirements, chainIneligibleReason, validateChain, defaultChainParams, buildChainBlueprint,
+    describeChainTask, parseChainReply, CHAIN_SYSTEM_PROMPT,
+} from "../blueprint/chain.js"
 
 const data = JSON.parse(fs.readFileSync(new URL("../data/space-age-2.1.23.json", import.meta.url), "utf8"))
 const deflate = bytes => new Uint8Array(zlib.deflateSync(bytes, {level: 9}))
@@ -539,6 +542,89 @@ await test("pipes in the preview link to the pipes and tunnel ends they touch", 
     // Pieces beside a tunnel end also link sideways.
     assert.ok(pipes.some(s => s.links.includes(4)))
     assert.equal(m.shapes.filter(s => s.kind === "underground").length, build(plastic, CP).entities.filter(e => e.name === "pipe-to-ground").length)
+})
+
+function chainReply(p) {
+    let stage = s => ({machines: s.machines, input_inserter: s.inputInserter, output_inserter: s.outputInserter, input_inserter_count: s.inputInserters, output_inserter_count: s.outputInserters})
+    return JSON.stringify({
+        mid_belt: p.mid, supply_belt: p.supply, pole: p.pole, notes: "ok",
+        upstream: {...stage(p.upstream), input_belt: p.upstream.inputBelt},
+        downstream: {...stage(p.downstream), output_belt: p.downstream.outputBelt},
+    })
+}
+
+await test("a chain task tells the model both stages and the loads on the shared belt", () => {
+    let task = describeChainTask(chainReq, chainMachines, data)
+    assert.equal(task.task, "chain")
+    assert.equal(task.upstream.recipe, "copper-cable")
+    assert.equal(task.downstream.recipe, "electronic-circuit")
+    assert.equal(task.shared_belt.linking_item, "copper-cable")
+    assert.equal(task.shared_belt.linking_per_second, 9)
+    assert.equal(task.shared_belt.other_item, "iron-plate")
+    assert.equal(task.shared_belt.other_per_second, 3)
+    assert.ok(task.upstream.fewest_machines >= 1 && task.downstream.fewest_machines >= 1)
+    assert.ok(CHAIN_SYSTEM_PROMPT.length > 500)
+})
+
+await test("a chain reply is read into chain parameters, with the machines fixed by the task", () => {
+    let good = defaultChainParams(chainReq, chainMachines, data)
+    let parsed = parseChainReply("Sure:\n```json\n" + chainReply(good) + "\n```", chainReq, chainMachines)
+    assert.equal(parsed.mid, good.mid)
+    assert.equal(parsed.upstream.machines, good.upstream.machines)
+    assert.equal(parsed.upstream.machine, "assembling-machine-2")
+    assert.equal(parsed.downstreamRecipe, "electronic-circuit")
+    assert.equal(parsed.upstreamRecipe, "copper-cable")
+    assert.equal(buildChainBlueprint(parsed, chainReq, data).ok, true)
+    assert.throws(() => parseChainReply("nothing", chainReq, chainMachines))
+    // Missing pieces become validation errors, not crashes.
+    let bare = parseChainReply("{}", chainReq, chainMachines)
+    let r = buildChainBlueprint(bare, chainReq, data)
+    assert.equal(r.ok, false)
+    assert.ok(r.errors.length > 0)
+})
+
+await test("the chain loop repairs a rejected first answer, and asks with the chain prompt", async () => {
+    let good = defaultChainParams(chainReq, chainMachines, data)
+    let bad = {...good, upstream: {...good.upstream, machines: 1}}
+    let replies = [chainReply(bad), chainReply(good)]
+    let seen = []
+    let fetchFn = async (url, init) => {
+        seen.push({url, body: JSON.parse(init.body)})
+        return {ok: true, json: async () => ({message: {role: "assistant", content: replies.shift()}})}
+    }
+    let r = await askForChainLayout({provider: "ollama", model: "m", requirement: chainReq, machines: chainMachines, data, fetchFn})
+    assert.ok(r.ok, r.errors.join("; "))
+    assert.equal(r.attempts, 2)
+    assert.equal(seen[0].body.messages[0].content, CHAIN_SYSTEM_PROMPT)
+    assert.equal(JSON.parse(seen[0].body.messages[1].content).task, "chain")
+    assert.ok(seen[1].body.messages.at(-1).content.includes("rejected"))
+    assert.ok(r.params.upstream.machines >= 1)
+})
+
+await test("the chain loop gives up with the validator's reasons", async () => {
+    let fetchFn = async () => ({ok: true, json: async () => ({message: {content: "{\"mid_belt\": \"transport-belt\"}"}})})
+    let r = await askForChainLayout({provider: "ollama", model: "m", requirement: chainReq, machines: chainMachines, data, fetchFn, maxAttempts: 2})
+    assert.equal(r.ok, false)
+    assert.equal(r.attempts, 2)
+    assert.ok(r.errors.length > 0)
+})
+
+await test("installed Ollama models are listed, sorted, and errors reported", async () => {
+    let urls = []
+    let fetchFn = async url => {
+        urls.push(url)
+        return {ok: true, json: async () => ({models: [{name: "qwen3.8:latest"}, {name: "llama3:8b"}]})}
+    }
+    assert.deepEqual(await listOllamaModels("http://example:1234", fetchFn), ["llama3:8b", "qwen3.8:latest"])
+    assert.equal(urls[0], "http://example:1234/api/tags")
+    let failing = async () => ({ok: false, status: 500, statusText: "oops", json: async () => ({error: "boom"})})
+    await assert.rejects(listOllamaModels("http://example:1234", failing), /500.*boom/)
+})
+
+await test("the validator reports an unknown feeder belt instead of crashing", () => {
+    let good = defaultChainParams(chainReq, chainMachines, data)
+    let v = validateChain({...good, supply: "wooden-chest"}, chainReq, data)
+    assert.ok(v.errors.some(e => /supply belt/.test(e)), v.errors.join("; "))
 })
 
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)

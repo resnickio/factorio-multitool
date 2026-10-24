@@ -600,3 +600,7 @@ tr.locked-recipe td.item-icon {
 .blueprint-text-preview {
     margin: 0.5em 0;
 }
+.blueprint-api select.model-select {
+    display: block;
+    margin: 0.3em 0;
+}

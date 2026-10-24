@@ -9,7 +9,7 @@
 //
 // With --model, the layout is chosen by that local Ollama model (as in the
 // Blueprint tab) instead of by the built-in defaults, and the blueprint made
-// from its answer is what gets built. (Single columns only.)
+// from its answer is what gets built. (columns and chains).
 //
 // The layout says where it meets the rest of the factory (connection points):
 // the test feeds the input belts, empties the output belt, and puts an
@@ -54,15 +54,26 @@ const deflate = bytes => new Uint8Array(zlib.deflateSync(bytes, {level: 9}))
 let layout
 if (sample.chain) {
     const { defaultChainParams, buildChainBlueprint } = await import("../blueprint/chain.js")
+    const { askForChainLayout } = await import("../blueprint/llm.js")
     let requirement = {recipe: sample.chain.downstream, rate: sample.rate, upstream: sample.chain.upstream}
     let machines = {upstream: sample.chain.upstreamMachine, downstream: sample.chain.downstreamMachine}
-    let params = defaultChainParams(requirement, machines, data)
-    let result = buildChainBlueprint(params, requirement, data)
+    let params, result
+    if (args.model) {
+        result = await askForChainLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machines, data})
+        console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
+        params = result.params
+        if (params && params.notes) {
+            console.log("model's notes:", params.notes)
+        }
+    } else {
+        params = defaultChainParams(requirement, machines, data)
+        result = buildChainBlueprint(params, requirement, data)
+    }
     if (!result.ok) {
         console.log("chain rejected:\n" + result.errors.join("\n"))
         process.exit(1)
     }
-    console.log("chain layout:", JSON.stringify(params))
+    console.log("chain layout:", JSON.stringify({...params, notes: undefined}))
     layout = {
         entities: result.entities,
         connections: result.connections,

@@ -17,8 +17,8 @@
 // from), as in the right-hand column of a two-column layout.
 
 import {
-    entityInfo, lookupRecipe, insertRows, fluidIngredients, beltThroughput,
-    NORTH, SOUTH, EAST, WEST,
+    entityInfo, lookupRecipe, insertRows, fluidIngredients, beltThroughput, inserterThroughput, machineCrafts,
+    ALLOWED_INSERTERS, ALLOWED_POLES, NORTH, SOUTH, EAST, WEST,
 } from "./entities.js"
 import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
 import { defaultParams } from "./dsl.js"
@@ -117,7 +117,12 @@ export function validateChain(params, requirement, data) {
         stats[which] = checked.stats
     }
     if (st.other) {
-        let supplyCap = beltThroughput(entityInfo(data, params.supply))
+        let supplyInfo = data.blueprint_entities[params.supply]
+        if (!supplyInfo || supplyInfo.type !== "transport-belt") {
+            errors.push(`supply belt "${params.supply}" is not a known transport-belt`)
+            return {errors, warnings, stats}
+        }
+        let supplyCap = beltThroughput(supplyInfo)
         stats.otherLoad = st.other.rate
         if (st.other.rate > supplyCap + 1e-9) {
             errors.push(`the feeder belt (${params.supply}) carries ${supplyCap}/s of ${st.other.item}, but ${st.other.rate.toFixed(2)}/s is needed`)
@@ -297,5 +302,86 @@ export function buildChainBlueprint(params, requirement, data) {
     return {
         ok: true, errors: [], warnings: checked.warnings, stats: checked.stats,
         entities: placed.entities, connections: placed.connections, blueprint,
+    }
+}
+
+// What a model is told about a chain: both stages, and the loads on the shared
+// belt. The calculator supplies the numbers; the model picks the parameters.
+export function describeChainTask(requirement, machines, data) {
+    let st = stageRequirements(requirement, data)
+    let stage = which => {
+        let recipe = lookupRecipe(data, st[which].recipe)
+        let crafts = machineCrafts(entityInfo(data, machines[which]), recipe)
+        let outPer = recipe.results[0].amount * crafts
+        return {
+            recipe: recipe.key,
+            machine: machines[which],
+            ingredients: recipe.ingredients.map(i => ({item: i.name, per_second_at_full_speed: Number((i.amount * crafts).toFixed(4))})),
+            output_item: recipe.results[0].name,
+            required_output_per_second: Number(st[which].rate.toFixed(4)),
+            output_per_second_at_full_speed: Number(outPer.toFixed(4)),
+            fewest_machines: Math.ceil(st[which].rate / outPer - 1e-9),
+        }
+    }
+    return {
+        task: "chain",
+        upstream: stage("upstream"),
+        downstream: stage("downstream"),
+        shared_belt: {
+            linking_item: st.linking,
+            linking_per_second: Number(st.upstream.rate.toFixed(4)),
+            other_item: st.other ? st.other.item : null,
+            other_per_second: st.other ? Number(st.other.rate.toFixed(4)) : 0,
+        },
+        options: {
+            belts: availableBelts(data).map(b => ({name: b, items_per_second: beltThroughput(data.blueprint_entities[b])})),
+            inserters: ALLOWED_INSERTERS.map(n => ({
+                name: n,
+                from_belt_per_second: Number(inserterThroughput(data.blueprint_entities[n], true).toFixed(2)),
+                to_belt_per_second: Number(inserterThroughput(data.blueprint_entities[n], false).toFixed(2)),
+            })),
+            inserters_per_machine: [1, 2],
+            poles: ALLOWED_POLES,
+        },
+    }
+}
+
+export const CHAIN_SYSTEM_PROMPT = `You design a chain of two columns of crafting machines for Factorio. You are given a task as JSON. The upstream machines make shared_belt.linking_item, an ingredient of the downstream recipe. Both columns stand beside one shared belt: the upstream machines put their output onto one lane of it, shared_belt.other_item (the downstream recipe's other ingredient, if any) is brought in on a feeder belt and fills the other lane, and the downstream machines take both from it. The upstream machines get their own ingredients from an outside belt, and the downstream machines put their output on a belt of its own. Reply with a single JSON object and nothing else, with exactly these keys:
+- "mid_belt": the shared belt, from options.belts. Its rates are for both lanes; each lane carries at most half. One lane must carry shared_belt.linking_per_second and the other shared_belt.other_per_second, so half of the belt's rate must cover the larger of the two.
+- "supply_belt": the feeder belt for the other ingredient, from options.belts; it carries shared_belt.other_per_second on both lanes.
+- "pole": a pole name from options.poles.
+- "upstream": an object with "machines" (integer, at least fewest_machines), "input_belt" (a belt from options.belts for the upstream machines' own ingredients), "input_inserter", "output_inserter" (names from options.inserters), and "input_inserter_count", "output_inserter_count" (1 or 2 per machine).
+- "downstream": an object with "machines" (at least fewest_machines), "output_belt" (a belt from options.belts), "input_inserter", "output_inserter", "input_inserter_count", "output_inserter_count" as for upstream.
+- "notes": one short sentence on your choices.
+Machines only work as much as is needed, so extra machines each work less, which lowers the load on every inserter and belt; a machine costs far more than an inserter, so first fix a shortfall in inserter speed with a second inserter on that side or a fast-inserter, and add machines beyond the fewest only if that is still not enough. If you are told how many machines would be enough, use at least that many. A stage's flow is scaled by how busy its machines are: required_output_per_second / (machines x output_per_second_at_full_speed). An input belt carries (machines x each ingredient's per_second_at_full_speed x how busy), and with two ingredients each is kept to its own lane, so each can use only half the belt's rate (with one, both lanes). Inserters only drop onto the far lane of a belt, so each column's output goes onto one lane and its output belt carries only half its listed rate. An input inserter must move the sum of the machine's ingredient rates (scaled by how busy it is); an output inserter must move the output rate; their rates are in options.inserters. Prefer the cheapest belts and inserters that are sufficient. Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why.`
+
+// Reads a model's reply into chain parameters. The recipes and machines are
+// fixed by the task, so the model cannot change them.
+export function parseChainReply(text, requirement, machines) {
+    let start = text.indexOf("{")
+    let end = text.lastIndexOf("}")
+    if (start === -1 || end === -1) {
+        throw new Error("the reply contained no JSON object")
+    }
+    let reply = JSON.parse(text.slice(start, end + 1))
+    let up = reply.upstream || {}
+    let down = reply.downstream || {}
+    return {
+        mid: reply.mid_belt,
+        supply: reply.supply_belt,
+        pole: reply.pole,
+        upstreamRecipe: requirement.upstream,
+        downstreamRecipe: requirement.recipe,
+        notes: reply.notes,
+        upstream: {
+            machine: machines.upstream, machines: up.machines, inputBelt: up.input_belt,
+            inputInserter: up.input_inserter, inputInserters: up.input_inserter_count,
+            outputInserter: up.output_inserter, outputInserters: up.output_inserter_count,
+        },
+        downstream: {
+            machine: machines.downstream, machines: down.machines, outputBelt: down.output_belt,
+            inputInserter: down.input_inserter, inputInserters: down.input_inserter_count,
+            outputInserter: down.output_inserter, outputInserters: down.output_inserter_count,
+        },
     }
 }
