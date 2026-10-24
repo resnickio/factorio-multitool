@@ -6,6 +6,8 @@
 
 import { describeTask, SYSTEM_PROMPT, parseReply, buildColumnBlueprint } from "./dsl.js"
 import { describeChainTask, CHAIN_SYSTEM_PROMPT, parseChainReply, buildChainBlueprint } from "./chain.js"
+import { buildLineBlueprint } from "./line.js"
+import { describeLineTask, LINE_SYSTEM_PROMPT, parseLineReply } from "./line_model.js"
 
 const ANTHROPIC_URL = "https://api.anthropic.com/v1/messages"
 export const OLLAMA_URL = "http://localhost:11434"
@@ -136,6 +138,21 @@ export async function askForChainLayout({
         task: describeChainTask(requirement, machines, data),
         parse: text => parseChainReply(text, requirement, machines),
         build: params => buildChainBlueprint(params, requirement, data),
+        maxAttempts,
+    })
+}
+
+// As askForLayout, for a production line: spec is {root, east, west} as for
+// buildLineBlueprint. The result's params are the line's.
+export async function askForLineLayout({
+    provider = "anthropic", apiKey, baseUrl = OLLAMA_URL, think = false,
+    model, spec, data, maxAttempts = 3, fetchFn = fetch,
+}) {
+    return askUntilAccepted({
+        call: caller({provider, apiKey, baseUrl, think, model, fetchFn, system: LINE_SYSTEM_PROMPT}),
+        task: describeLineTask(spec, data),
+        parse: text => parseLineReply(text, spec, data),
+        build: params => buildLineBlueprint(params, spec, data),
         maxAttempts,
     })
 }
