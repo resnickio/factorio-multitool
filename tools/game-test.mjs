@@ -55,8 +55,16 @@ let layout
 if (sample.line) {
     const { defaultLineParams, buildLineBlueprint } = await import("../blueprint/line.js")
     let spec = {root: {...sample.line.root, rate: sample.rate}, east: sample.line.east, west: sample.line.west}
-    let params = defaultLineParams(spec, data)
-    let result = buildLineBlueprint(params, spec, data)
+    let params, result
+    if (args.model) {
+        const { askForLineLayout } = await import("../blueprint/llm.js")
+        result = await askForLineLayout({provider: "ollama", model: args.model, maxAttempts: 6, spec, data})
+        console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
+        params = result.params
+    } else {
+        params = defaultLineParams(spec, data)
+        result = buildLineBlueprint(params, spec, data)
+    }
     if (!result.ok) {
         console.log("line rejected:\n" + result.errors.join("\n"))
         process.exit(1)

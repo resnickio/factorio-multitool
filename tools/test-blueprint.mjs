@@ -9,7 +9,8 @@ import { validateParams, validateLayout } from "../blueprint/validate.js"
 import { previewLayout } from "../blueprint/build.js"
 import { previewModel } from "../blueprint/preview.js"
 import { resolveLine, lineIneligibleReason, validateLine, defaultLineParams, buildLineBlueprint } from "../blueprint/line.js"
-import { askForLayout, askForChainLayout, listOllamaModels } from "../blueprint/llm.js"
+import { askForLayout, askForChainLayout, askForLineLayout, listOllamaModels } from "../blueprint/llm.js"
+import { describeLineTask, LINE_SYSTEM_PROMPT, parseLineReply } from "../blueprint/line_model.js"
 import { EAST } from "../blueprint/entities.js"
 import {
     stageRequirements, chainIneligibleReason, validateChain, defaultChainParams, buildChainBlueprint,
@@ -777,6 +778,75 @@ await test("inserters from plates are laid out, with long-handed inserters over 
 await test("a three-ingredient final recipe needs a wide enough machine", () => {
     let spec = {root: {recipe: "inserter", machine: "assembling-machine-2", rate: 2}, east: [{recipe: "electronic-circuit", machine: ASM2}], west: []}
     assert.equal(lineIneligibleReason(spec, data), null)
+})
+
+// The reply a model would give for these line parameters.
+const lineReply = p => {
+    let stage = s => ({machines: s.machines, input_inserter: s.inputInserter, output_inserter: s.outputInserter,
+        input_inserter_count: s.inputInserters, output_inserter_count: s.outputInserters, ...(s.feeder ? {feeder_belt: s.feeder} : {})})
+    let branch = b => ({stages: b.stages.map(stage), supply_belt: b.supply, ...(b.belts.length ? {belt_between: b.belts[0]} : {})})
+    return JSON.stringify({
+        mid_belt: p.mid, ...(p.mid2 ? {mid2_belt: p.mid2} : {}), pole: p.pole,
+        feeder_belts: Object.fromEntries(Object.entries(p.feeders).filter(([, v]) => v)),
+        final: {machines: p.root.machines, output_belt: p.root.outputBelt, input_inserter: p.root.inputInserter,
+            input_inserter_count: p.root.inputInserters, output_inserter: p.root.outputInserter,
+            output_inserter_count: p.root.outputInserters, ...(p.mid2 ? {far_input_inserter_count: p.root.farInserters} : {})},
+        east: branch(p.east), west: branch(p.west), notes: "ok",
+    })
+}
+
+await test("a line task tells the model each stage, the belts and the feeders", () => {
+    let task = describeLineTask(inserterPlan, data)
+    assert.equal(task.task, "line")
+    assert.equal(task.final.recipe, "inserter")
+    assert.equal(task.shared_belts.second_belt, true)
+    assert.deepEqual(task.shared_belts.mid2_items.map(i => i.item), ["electronic-circuit"])
+    assert.deepEqual(task.feeders.west, {item: "iron-plate", per_second: 2})
+    assert.equal(task.east.length, 2)
+    assert.equal(task.east[0].extra_ingredient_from_feeder.item, "iron-plate")
+    assert.equal(task.east[1].extra_ingredient_from_feeder, null)
+    assert.ok(task.west[0].fewest_machines >= 1)
+    assert.ok(LINE_SYSTEM_PROMPT.length > 500)
+})
+
+await test("a line reply is read into line parameters, with recipes and machines fixed by the task", () => {
+    for (let spec of [orePlan, inserterPlan]) {
+        let good = defaultLineParams(spec, data)
+        let parsed = parseLineReply("Sure:\n```json\n" + lineReply(good) + "\n```", spec, data)
+        assert.equal(parsed.mid, good.mid)
+        assert.equal(parsed.root.machines, good.root.machines)
+        assert.equal(parsed.east.stages[0].recipe, spec.east[0].recipe)
+        assert.equal(buildLineBlueprint(parsed, spec, data).ok, true)
+        assert.throws(() => parseLineReply("nothing", spec, data))
+        let bare = buildLineBlueprint(parseLineReply("{}", spec, data), spec, data)
+        assert.equal(bare.ok, false)
+        assert.ok(bare.errors.length > 0)
+    }
+})
+
+await test("the line loop repairs a rejected first answer, and asks with the line prompt", async () => {
+    let good = defaultLineParams(inserterPlan, data)
+    let bad = {...good, root: {...good.root, machines: 1}}
+    let replies = [lineReply(bad), lineReply(good)]
+    let seen = []
+    let fetchFn = async (url, init) => {
+        seen.push({url, body: JSON.parse(init.body)})
+        return {ok: true, json: async () => ({message: {role: "assistant", content: replies.shift()}})}
+    }
+    let r = await askForLineLayout({provider: "ollama", model: "m", spec: inserterPlan, data, fetchFn})
+    assert.ok(r.ok, (r.errors || []).join("; "))
+    assert.equal(r.attempts, 2)
+    assert.equal(seen[0].body.messages[0].content, LINE_SYSTEM_PROMPT)
+    assert.equal(JSON.parse(seen[0].body.messages[1].content).task, "line")
+    assert.ok(seen[1].body.messages.at(-1).content.includes("rejected"))
+})
+
+await test("the line loop gives up with the validator's reasons", async () => {
+    let fetchFn = async () => ({ok: true, json: async () => ({message: {content: "{\"mid_belt\": \"transport-belt\"}"}})})
+    let r = await askForLineLayout({provider: "ollama", model: "m", spec: orePlan, data, fetchFn, maxAttempts: 2})
+    assert.equal(r.ok, false)
+    assert.equal(r.attempts, 2)
+    assert.ok(r.errors.length > 0)
 })
 
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)
