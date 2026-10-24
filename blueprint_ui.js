@@ -6,7 +6,7 @@ import { askForLayout, askForChainLayout, askForLineLayout, listOllamaModels, OL
 import { entityInfo, lookupRecipe, machineCrafts } from "./blueprint/entities.js"
 import { chainIneligibleReason, defaultChainParams, buildChainBlueprint } from "./blueprint/chain.js"
 import { renderPreview } from "./blueprint_preview.js"
-import { lineIneligibleReason, defaultLineParams, buildLineBlueprint } from "./blueprint/line.js"
+import { lineIneligibleReason, defaultLineParams, buildLineBlueprint, lineMinimums } from "./blueprint/line.js"
 
 // The Blueprint tab: turns the furnace and assembler rows in the current
 // solution into blueprint strings for the game, singly or as chains.
@@ -194,6 +194,7 @@ function renderResult(root) {
                 .classed("hint", true)
                 .text(p.notes)
         }
+        showTrimmed(box)
     }
     if (!output.ok) {
         box.append("div")
@@ -383,6 +384,29 @@ async function generateLine(line) {
     renderBlueprint()
 }
 
+// Says which parts have more machines than the calculator counted, and why.
+function explainMachines(box, minimums, params, lineSpec, name) {
+    let rows = [[name(lineSpec.root.recipe), params.root.machines, minimums.root]]
+    for (let side of ["east", "west"]) {
+        params[side].stages.forEach((stage, j) => rows.push([name(stage.recipe), stage.machines, minimums[side][j]]))
+    }
+    let more = rows.filter(([, have, need]) => have > need)
+    if (more.length > 0) {
+        box.append("div")
+            .classed("hint", true)
+            .text(`More machines than the calculator counts: the inserters beside a machine cannot move its ingredients fast enough to keep fewer busy, and each part is sized 5% over the rate so the line reaches it: ${more.map(([n, have, need]) => `${n} ${have} (not ${need})`).join(", ")}.`)
+    }
+    showTrimmed(box)
+}
+
+function showTrimmed(box) {
+    if (output.trimmed && output.trimmed.length > 0) {
+        box.append("div")
+            .classed("hint", true)
+            .text(`The model asked for more machines than its inserters needed, so they were cut back: ${output.trimmed.join("; ")}.`)
+    }
+}
+
 function renderLineResult(box) {
     let {spec: lineSpec, params} = output.line
     let name = key => lookupRecipe(spec.data, key).localized_name.en
@@ -408,6 +432,7 @@ function renderLineResult(box) {
     let attempts = output.ok && output.attempts > 0 ? ` (accepted after ${output.attempts} ${output.attempts === 1 ? "attempt" : "attempts"})` : ""
     box.append("div")
         .text(`${parts.join("; ")}; shared belt ${params.mid}${attempts}.`)
+    explainMachines(box, lineMinimums(lineSpec, spec.data), params, lineSpec, name)
     if (params.notes) {
         box.append("div")
             .classed("hint", true)
@@ -471,6 +496,7 @@ function renderChainResult(box) {
     let attempts = output.ok && output.attempts > 0 ? ` (accepted after ${output.attempts} ${output.attempts === 1 ? "attempt" : "attempts"})` : ""
     box.append("div")
         .text(`${part(p.upstream, up.localized_name.en)} feeding ${part(p.downstream, down.localized_name.en)} along a ${p.mid}${attempts}.`)
+    showTrimmed(box)
     if (p.notes) {
         box.append("div")
             .classed("hint", true)

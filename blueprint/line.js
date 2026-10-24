@@ -166,6 +166,19 @@ export function resolveLine(spec, data) {
     }
 }
 
+// The fewest machines each part of a line needs at full speed, which is what
+// the calculator counts: {root, east: [...], west: [...]}. A layout with more
+// has machines whose inserters could not keep them busy.
+export function lineMinimums(spec, data) {
+    let resolved = resolveLine(spec, data)
+    let need = (recipeKey, machine, rate) => {
+        let recipe = lookupRecipe(data, recipeKey)
+        return Math.ceil(rate / (recipe.results[0].amount * machineCrafts(entityInfo(data, machine), recipe)) - 1e-9)
+    }
+    let stages = side => resolved.stages[side].map(s => need(s.recipe, s.machine, s.rate))
+    return {root: need(spec.root.recipe, spec.root.machine, spec.root.rate), east: stages("east"), west: stages("west")}
+}
+
 // Why this line cannot be built, or null.
 export function lineIneligibleReason(spec, data) {
     for (let side of SIDES) {
