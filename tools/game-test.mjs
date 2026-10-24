@@ -17,11 +17,12 @@
 // directory, so it does not touch your saves or configuration, and can run
 // beside the game. It keeps running after the report, so you can join it
 // (Multiplayer, Connect to address, localhost:<port>) and look. Stop it with
-// the printed taskkill command.
+// the printed taskkill command (or just run the test again: it stops the
+// server it left behind first).
 
 import fs from "node:fs"
 import path from "node:path"
-import { spawn } from "node:child_process"
+import { spawn, execFileSync } from "node:child_process"
 import zlib from "node:zlib"
 import { fileURLToPath } from "node:url"
 import { defaultParams, buildColumnBlueprint } from "../blueprint/dsl.js"
@@ -161,7 +162,20 @@ const fluidSupplies = lua_list(layout.connections.fluids, f => `{x = ${f.x}, y =
 // Extra feeds some layouts have (belts supplied from outside).
 const extraFeeds = lua_list(layout.connections.extraInputs || [], f => `{x = ${f.x}, y = ${f.y}, items = ${lua_list(f.items, i => '"' + i + '"')}}`)
 
+// Stops servers an earlier run left on this data directory (they hold it open,
+// so it could not be cleared), and no other Factorio process.
+function stopServersOn(dir) {
+    let config = path.join(dir, "config.ini").replace(/'/g, "''")
+    let script = `Get-CimInstance Win32_Process -Filter "Name='factorio.exe'" | Where-Object { $_.CommandLine -like '*${config}*' } | ForEach-Object { Stop-Process -Id $_.ProcessId -Force; $_.ProcessId }`
+    let stopped = execFileSync("powershell", ["-NoProfile", "-Command", script], {encoding: "utf8"}).split(/\s+/).filter(Boolean)
+    if (stopped.length > 0) {
+        console.log(`stopped earlier test server pid ${stopped.join(", ")}`)
+        execFileSync("powershell", ["-NoProfile", "-Command", "Start-Sleep -Seconds 3"])
+    }
+}
+
 // Lay out the data directory.
+stopServersOn(WORK)
 fs.rmSync(WORK, {recursive: true, force: true})
 fs.mkdirSync(path.join(WORK, "write", "scenarios", "bp-test"), {recursive: true})
 fs.writeFileSync(path.join(WORK, "config.ini"), `[path]
