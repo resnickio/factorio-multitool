@@ -18,7 +18,7 @@
 
 import {
     entityInfo, lookupRecipe, insertRows, fluidIngredients, beltThroughput, inserterThroughput, machineCrafts,
-    ALLOWED_INSERTERS, ALLOWED_POLES, NORTH, SOUTH, EAST, WEST,
+    allowedInserters, ALLOWED_POLES, NORTH, SOUTH, EAST, WEST,
 } from "./entities.js"
 import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
 import { defaultParams } from "./dsl.js"
@@ -335,7 +335,7 @@ export function describeChainTask(requirement, machines, data) {
         },
         options: {
             belts: availableBelts(data).map(b => ({name: b, items_per_second: beltThroughput(data.blueprint_entities[b])})),
-            inserters: ALLOWED_INSERTERS.map(n => ({
+            inserters: allowedInserters(data).map(n => ({
                 name: n,
                 from_belt_per_second: Number(inserterThroughput(data.blueprint_entities[n], true).toFixed(2)),
                 to_belt_per_second: Number(inserterThroughput(data.blueprint_entities[n], false).toFixed(2)),

@@ -28,6 +28,7 @@ import { fileURLToPath } from "node:url"
 import { defaultParams, buildColumnBlueprint } from "../blueprint/dsl.js"
 import { askForLayout } from "../blueprint/llm.js"
 import { encodeBlueprint } from "../blueprint/codec.js"
+import { STACK_INSERTERS } from "../blueprint/entities.js"
 import { SAMPLES, DEFAULT_MACHINE } from "./samples.mjs"
 
 const args = {}
@@ -48,6 +49,10 @@ if (!sample) {
     throw new Error("unknown sample " + SAMPLE)
 }
 const data = JSON.parse(fs.readFileSync(path.join(here, "../data/space-age-2.1.23.json"), "utf8"))
+// --stack true lets layouts use stack inserters (the Stack inserter technology).
+if (args.stack === "true") {
+    data.allowedInserters = STACK_INSERTERS
+}
 const deflate = bytes => new Uint8Array(zlib.deflateSync(bytes, {level: 9}))
 
 // Works out the layout to build: its entities, connection points, the recipes

@@ -4,7 +4,7 @@
 
 import {
     entityInfo, lookupRecipe, beltThroughput, machineCrafts, inserterThroughput,
-    ALLOWED_INSERTERS, ALLOWED_LONG_INSERTERS, ALLOWED_POLES,
+    allowedInserters, ALLOWED_LONG_INSERTERS, ALLOWED_POLES,
 } from "./entities.js"
 import { resolveLine, availableBelts } from "./line.js"
 
@@ -45,7 +45,7 @@ export function describeLineTask(spec, data) {
         west: [],
         options: {
             belts: availableBelts(data).map(b => ({name: b, items_per_second: beltThroughput(data.blueprint_entities[b])})),
-            inserters: ALLOWED_INSERTERS.map(n => ({
+            inserters: allowedInserters(data).map(n => ({
                 name: n,
                 from_belt_per_second: Number(inserterThroughput(data.blueprint_entities[n], true).toFixed(2)),
                 to_belt_per_second: Number(inserterThroughput(data.blueprint_entities[n], false).toFixed(2)),

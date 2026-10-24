@@ -7,7 +7,9 @@
 // The snippet runs after a flat concrete area (x -10..60, y -20..100) has been
 // laid. It can use `report(text)` to add a line to the output, `surface`,
 // `force`, and, if --blueprint-json is given, `BLUEPRINT` (the encoded string).
-// Reading the result file finishes the run, and the server is stopped.
+// Reading the result file finishes the run, and the server is stopped. A
+// snippet which has to let game time pass sets `DEFER = true`, and calls
+// `finish()` itself once it has its results.
 
 import fs from "node:fs"
 import path from "node:path"
@@ -51,6 +53,8 @@ const lua = `
 local BLUEPRINT = "${blueprint}"
 local lines = {}
 function report(text) lines[#lines + 1] = tostring(text) end
+DEFER = false
+function finish() helpers.write_file("probe-result.txt", table.concat(lines, "\\n") .. "\\n", false) end
 script.on_init(function()
   local surface = game.surfaces[1]
   local force = game.forces.player
@@ -67,7 +71,7 @@ script.on_init(function()
 ${body}
   end)
   if not ok then report("ERROR: " .. tostring(err)) end
-  helpers.write_file("probe-result.txt", table.concat(lines, "\\n") .. "\\n", false)
+  if not DEFER then finish() end
 end)
 `
 fs.writeFileSync(path.join(WORK, "write", "scenarios", "probe", "control.lua"), lua)

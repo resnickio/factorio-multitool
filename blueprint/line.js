@@ -36,7 +36,7 @@
 import {
     entityInfo, lookupRecipe, insertRows, fluidIngredients, fluidInputPorts, STEP, opposite,
     beltThroughput, machineCrafts,
-    ALLOWED_INSERTERS, ALLOWED_LONG_INSERTERS, NORTH, SOUTH, EAST, WEST,
+    allowedInserters, ALLOWED_LONG_INSERTERS, NORTH, SOUTH, EAST, WEST,
 } from "./entities.js"
 import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
 import { defaultParams } from "./dsl.js"
@@ -585,8 +585,8 @@ function searchRoot(spec, resolved, data, mid, mid2, factor) {
     let fewest = Math.ceil(rate / outPer - 1e-9)
     let outChoices = []
     for (let count of [1, 2]) {
-        for (let name of ALLOWED_INSERTERS) {
-            outChoices.push({name, count, cost: count * (1 + ALLOWED_INSERTERS.indexOf(name))})
+        for (let name of allowedInserters(data)) {
+            outChoices.push({name, count, cost: count * (1 + allowedInserters(data).indexOf(name))})
         }
     }
     outChoices.sort((a, b) => a.cost - b.cost)
@@ -597,7 +597,7 @@ function searchRoot(spec, resolved, data, mid, mid2, factor) {
                 if ((resolved.m === 2) !== (far > 0)) {
                     continue
                 }
-                for (let reg of ALLOWED_INSERTERS) {
+                for (let reg of allowedInserters(data)) {
                     for (let out of outChoices) {
                         for (let outputBelt of belts) {
                             let candidate = {

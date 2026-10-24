@@ -2,7 +2,7 @@
 
 import {
     entityInfo, beltThroughput, inserterThroughput, machineCrafts, lookupRecipe,
-    isMachineType, solidItems, ALLOWED_INSERTERS, ALLOWED_LONG_INSERTERS, ALLOWED_POLES, NORTH, EAST, SOUTH, WEST, STEP,
+    isMachineType, solidItems, allowedInserters, ALLOWED_LONG_INSERTERS, ALLOWED_POLES, NORTH, EAST, SOUTH, WEST, STEP,
     opposite, fluidInputPorts, fluidIngredients, insertRows, FLUID_MACHINES,
 } from "./entities.js"
 
@@ -86,12 +86,12 @@ export function validateParams(params, requirement, data) {
     let okOi = known("outputInserter", ["inserter"])
     let okPole = known("pole", ["electric-pole"])
     // Long-handed inserters take from the second belt of a line's final recipe.
-    let inputKinds = params.longInput ? ALLOWED_LONG_INSERTERS : ALLOWED_INSERTERS
+    let inputKinds = params.longInput ? ALLOWED_LONG_INSERTERS : allowedInserters(data)
     if (okIi && !inputKinds.includes(params.inputInserter)) {
         errors.push(`inputInserter must be one of ${inputKinds.join(", ")}`)
     }
-    if (okOi && !ALLOWED_INSERTERS.includes(params.outputInserter)) {
-        errors.push(`outputInserter must be one of ${ALLOWED_INSERTERS.join(", ")}`)
+    if (okOi && !allowedInserters(data).includes(params.outputInserter)) {
+        errors.push(`outputInserter must be one of ${allowedInserters(data).join(", ")}`)
     }
     if (okPole && !ALLOWED_POLES.includes(params.pole)) {
         errors.push(`pole must be one of ${ALLOWED_POLES.join(", ")}`)

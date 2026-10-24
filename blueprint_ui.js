@@ -3,7 +3,7 @@ import { encodeBlueprint } from "./blueprint/codec.js"
 import { defaultParams, buildColumnBlueprint, ineligibleReason } from "./blueprint/dsl.js"
 import { previewLayout } from "./blueprint/build.js"
 import { askForLayout, askForChainLayout, askForLineLayout, listOllamaModels, OLLAMA_URL } from "./blueprint/llm.js"
-import { entityInfo, lookupRecipe, machineCrafts } from "./blueprint/entities.js"
+import { entityInfo, lookupRecipe, machineCrafts, STACK_INSERTERS } from "./blueprint/entities.js"
 import { chainIneligibleReason, defaultChainParams, buildChainBlueprint } from "./blueprint/chain.js"
 import { renderPreview } from "./blueprint_preview.js"
 import { lineIneligibleReason, defaultLineParams, buildLineBlueprint, lineMinimums } from "./blueprint/line.js"
@@ -27,6 +27,28 @@ let ollamaUrl = OLLAMA_URL
 let output = null
 let busy = false
 
+// Stack inserters need a late technology: they are used only when asked for,
+// and by default when the research state limits the techs and includes it.
+let allowStack = null
+
+function stackAllowed() {
+    if (allowStack !== null) {
+        return allowStack
+    }
+    return spec.researched !== null && [...spec.researched].some(tech => tech.key === "stack-inserter")
+}
+
+// The data the generator works from: the calculator's, with the inserters it
+// may use.
+let bpDataCache = {data: null, stack: null, result: null}
+function bpData() {
+    let stack = stackAllowed()
+    if (bpDataCache.data !== spec.data || bpDataCache.stack !== stack) {
+        bpDataCache = {data: spec.data, stack, result: stack ? {...spec.data, allowedInserters: STACK_INSERTERS} : spec.data}
+    }
+    return bpDataCache.result
+}
+
 function deflate(bytes) {
     return pako.deflate(bytes, {level: 9})
 }
@@ -35,7 +57,7 @@ function deflate(bytes) {
 // and, if a column cannot be built for it, why not.
 function columnRequirements() {
     let result = []
-    let data = spec.data
+    let data = bpData()
     if (!data || !data.blueprint_entities || !spec.lastTotals) {
         return result
     }
@@ -73,7 +95,7 @@ function chainRequirements(reqs) {
             let reason = chainIneligibleReason(
                 {recipe: down.recipe.key, rate: down.rate, upstream: up.recipe.key},
                 {upstream: up.building.key, downstream: down.building.key},
-                spec.data,
+                bpData(),
             )
             chains.push({up, down, reason})
         }
@@ -96,21 +118,21 @@ async function generateChain(chain) {
             if (apiKey === "") {
                 throw new Error("Enter an API key, or choose another way to build.")
             }
-            let asked = await askForChainLayout({provider, apiKey, model: models.anthropic, requirement, machines, data: spec.data})
+            let asked = await askForChainLayout({provider, apiKey, model: models.anthropic, requirement, machines, data: bpData()})
             output = {...asked, chain: asked.params}
         } else if (provider === "ollama") {
-            let asked = await askForChainLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machines, data: spec.data})
+            let asked = await askForChainLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machines, data: bpData()})
             output = {...asked, chain: asked.params}
         } else {
-            let params = defaultChainParams(requirement, machines, spec.data)
-            output = {...buildChainBlueprint(params, requirement, spec.data), chain: params, attempts: 0, log: []}
+            let params = defaultChainParams(requirement, machines, bpData())
+            output = {...buildChainBlueprint(params, requirement, bpData()), chain: params, attempts: 0, log: []}
         }
     } catch (e) {
         output = {failed: e.message}
     }
     if (output.ok) {
         output.text = encodeBlueprint(output.blueprint, deflate)
-        output.preview = previewLayout(output.entities, spec.data)
+        output.preview = previewLayout(output.entities, bpData())
     }
     busy = false
     renderBlueprint()
@@ -118,8 +140,8 @@ async function generateChain(chain) {
 
 // How many machines the solution calls for, without modules.
 function machinesNeeded(req) {
-    let recipe = lookupRecipe(spec.data, req.recipe.key)
-    let per = machineCrafts(entityInfo(spec.data, req.building.key), recipe) * recipe.results[0].amount
+    let recipe = lookupRecipe(bpData(), req.recipe.key)
+    let per = machineCrafts(entityInfo(bpData(), req.building.key), recipe) * recipe.results[0].amount
     return Math.ceil(req.rate / per - 1e-9)
 }
 
@@ -140,20 +162,20 @@ async function generate(req) {
             if (apiKey === "") {
                 throw new Error("Enter an API key, or choose another way to build.")
             }
-            output = await askForLayout({provider, apiKey, model: models.anthropic, requirement, machine, data: spec.data})
+            output = await askForLayout({provider, apiKey, model: models.anthropic, requirement, machine, data: bpData()})
         } else if (provider === "ollama") {
             // A local model costs nothing to ask again, so give it more tries.
-            output = await askForLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machine, data: spec.data})
+            output = await askForLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machine, data: bpData()})
         } else {
-            let params = defaultParams(requirement, machine, spec.data)
-            output = {...buildColumnBlueprint(params, requirement, spec.data), params, attempts: 0, log: []}
+            let params = defaultParams(requirement, machine, bpData())
+            output = {...buildColumnBlueprint(params, requirement, bpData()), params, attempts: 0, log: []}
         }
     } catch (e) {
         output = {failed: e.message}
     }
     if (output.ok) {
         output.text = encodeBlueprint(output.blueprint, deflate)
-        output.preview = previewLayout(output.entities, spec.data)
+        output.preview = previewLayout(output.entities, bpData())
     }
     busy = false
     renderBlueprint()
@@ -342,7 +364,7 @@ function lineRequirements(reqs) {
             east: (branches[0] || []).map(s => ({recipe: s.recipe.key, machine: s.building.key})),
             west: (branches[1] || []).map(s => ({recipe: s.recipe.key, machine: s.building.key})),
         }
-        lines.push({root, east: branches[0] || [], west: branches[1] || [], spec: lineSpec, reason: lineIneligibleReason(lineSpec, spec.data)})
+        lines.push({root, east: branches[0] || [], west: branches[1] || [], spec: lineSpec, reason: lineIneligibleReason(lineSpec, bpData())})
     }
     return lines
 }
@@ -364,21 +386,21 @@ async function generateLine(line) {
             if (apiKey === "") {
                 throw new Error("Enter an API key, or choose another way to build.")
             }
-            let asked = await askForLineLayout({provider, apiKey, model: models.anthropic, spec: line.spec, data: spec.data})
+            let asked = await askForLineLayout({provider, apiKey, model: models.anthropic, spec: line.spec, data: bpData()})
             output = {...asked, line: {spec: line.spec, params: asked.params}}
         } else if (provider === "ollama") {
-            let asked = await askForLineLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, spec: line.spec, data: spec.data})
+            let asked = await askForLineLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, spec: line.spec, data: bpData()})
             output = {...asked, line: {spec: line.spec, params: asked.params}}
         } else {
-            let params = defaultLineParams(line.spec, spec.data)
-            output = {...buildLineBlueprint(params, line.spec, spec.data), line: {spec: line.spec, params}, attempts: 0, log: []}
+            let params = defaultLineParams(line.spec, bpData())
+            output = {...buildLineBlueprint(params, line.spec, bpData()), line: {spec: line.spec, params}, attempts: 0, log: []}
         }
     } catch (e) {
         output = {failed: e.message}
     }
     if (output.ok) {
         output.text = encodeBlueprint(output.blueprint, deflate)
-        output.preview = previewLayout(output.entities, spec.data)
+        output.preview = previewLayout(output.entities, bpData())
     }
     busy = false
     renderBlueprint()
@@ -409,7 +431,7 @@ function showTrimmed(box) {
 
 function renderLineResult(box) {
     let {spec: lineSpec, params} = output.line
-    let name = key => lookupRecipe(spec.data, key).localized_name.en
+    let name = key => lookupRecipe(bpData(), key).localized_name.en
     if (!params) {
         box.append("div")
             .classed("blueprint-error", true)
@@ -432,7 +454,7 @@ function renderLineResult(box) {
     let attempts = output.ok && output.attempts > 0 ? ` (accepted after ${output.attempts} ${output.attempts === 1 ? "attempt" : "attempts"})` : ""
     box.append("div")
         .text(`${parts.join("; ")}; shared belt ${params.mid}${attempts}.`)
-    explainMachines(box, lineMinimums(lineSpec, spec.data), params, lineSpec, name)
+    explainMachines(box, lineMinimums(lineSpec, bpData()), params, lineSpec, name)
     if (params.notes) {
         box.append("div")
             .classed("hint", true)
@@ -491,8 +513,8 @@ function renderLineResult(box) {
 function renderChainResult(box) {
     let p = output.chain
     let part = (stage, name) => `${stage.machines} × ${stage.machine} (${name})`
-    let up = lookupRecipe(spec.data, p.upstreamRecipe)
-    let down = lookupRecipe(spec.data, p.downstreamRecipe)
+    let up = lookupRecipe(bpData(), p.upstreamRecipe)
+    let down = lookupRecipe(bpData(), p.downstreamRecipe)
     let attempts = output.ok && output.attempts > 0 ? ` (accepted after ${output.attempts} ${output.attempts === 1 ? "attempt" : "attempts"})` : ""
     box.append("div")
         .text(`${part(p.upstream, up.localized_name.en)} feeding ${part(p.downstream, down.localized_name.en)} along a ${p.mid}${attempts}.`)
@@ -615,6 +637,17 @@ function renderProviderControls(panel) {
         label.append("span")
             .text(" " + text)
     }
+    let stackBox = panel.append("label")
+        .style("display", "block")
+    stackBox.append("input")
+        .attr("type", "checkbox")
+        .property("checked", stackAllowed())
+        .on("change", function() {
+            allowStack = this.checked
+            renderBlueprint()
+        })
+    stackBox.append("span")
+        .text(" Allow stack inserters (needs the Stack inserter technology)")
     if (provider === "none") {
         return
     }
