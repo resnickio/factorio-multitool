@@ -55,12 +55,19 @@ export function beltThroughput(info) {
     return info.speed * 480
 }
 
-// Approximate items per second moved by an inserter without stack bonuses,
-// from a chest. A swing is a rotation out and back, plus a little overhead.
-// Taking from a moving belt is slower; the factor is a conservative estimate.
+// Approximate items per second moved by an inserter, from a chest. A swing is
+// a rotation out and back, plus a little overhead. Taking from a moving belt
+// is slower; the factor is a conservative estimate.
+//
+// Measured in the game with no research: a stack inserter moves about 5 items
+// a swing between chests, but about 3.3 from a compressed belt and as many as
+// a belt lane carries onto one, so its stack is counted as at most 2 from a
+// belt and 3 onto one. (The bulk inserter has no stack bonus and moves what a
+// fast inserter does.)
 export function inserterThroughput(info, fromBelt) {
     let cycleTicks = 1 / info.rotation_speed + 1
-    let rate = TICKS_PER_SECOND * (1 + info.stack_size_bonus) / cycleTicks
+    let stack = Math.min(1 + info.stack_size_bonus, fromBelt ? 2 : 3)
+    let rate = TICKS_PER_SECOND * stack / cycleTicks
     return fromBelt ? rate * 0.7 : rate
 }
 
@@ -115,9 +122,14 @@ export function insertRows(size, taken) {
 // Machines whose fluid connections have been checked in the game.
 export const FLUID_MACHINES = ["chemical-plant"]
 
-// The inserters this generator knows how to reason about: no stack bonuses,
-// and reaching one tile.
+// The inserters this generator knows how to reason about, reaching one tile,
+// from the cheapest up. A stack inserter needs a late technology, so it is only
+// used when the data says so (data.allowedInserters).
 export const ALLOWED_INSERTERS = ["inserter", "fast-inserter"]
+export const STACK_INSERTERS = ["inserter", "fast-inserter", "stack-inserter"]
+export function allowedInserters(data) {
+    return data.allowedInserters || ALLOWED_INSERTERS
+}
 // Inserters which reach over the nearest belt to the one behind it.
 export const ALLOWED_LONG_INSERTERS = ["long-handed-inserter"]
 export const ALLOWED_POLES = ["small-electric-pole", "medium-electric-pole"]

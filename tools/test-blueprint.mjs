@@ -11,7 +11,7 @@ import { previewModel } from "../blueprint/preview.js"
 import { resolveLine, lineIneligibleReason, validateLine, defaultLineParams, buildLineBlueprint } from "../blueprint/line.js"
 import { askForLayout, askForChainLayout, askForLineLayout, listOllamaModels } from "../blueprint/llm.js"
 import { describeLineTask, LINE_SYSTEM_PROMPT, parseLineReply } from "../blueprint/line_model.js"
-import { EAST } from "../blueprint/entities.js"
+import { EAST, STACK_INSERTERS, inserterThroughput } from "../blueprint/entities.js"
 import {
     stageRequirements, chainIneligibleReason, validateChain, defaultChainParams, buildChainBlueprint,
     describeChainTask, parseChainReply, CHAIN_SYSTEM_PROMPT,
@@ -933,6 +933,39 @@ await test("the line loop gives up with the validator's reasons", async () => {
     assert.equal(r.ok, false)
     assert.equal(r.attempts, 2)
     assert.ok(r.errors.length > 0)
+})
+
+await test("a stack inserter is counted as at most two items a swing from a belt, and three onto one", () => {
+    let stack = data.blueprint_entities["stack-inserter"]
+    let fast = data.blueprint_entities["fast-inserter"]
+    assert.ok(Math.abs(inserterThroughput(stack, true) - 2 * inserterThroughput(fast, true)) < 1e-9)
+    assert.ok(Math.abs(inserterThroughput(stack, false) - 3 * inserterThroughput(fast, false)) < 1e-9)
+    // The bulk inserter has no stack bonus: it moves what a fast inserter does.
+    assert.equal(inserterThroughput(data.blueprint_entities["bulk-inserter"], true), inserterThroughput(fast, true))
+})
+
+await test("stack inserters are used only when the data allows them", () => {
+    let req = {recipe: "electronic-circuit", rate: 6}
+    let plain = defaultParams(req, "assembling-machine-2", data)
+    assert.ok(![plain.inputInserter, plain.outputInserter].includes("stack-inserter"))
+    let withStack = {...data, allowedInserters: STACK_INSERTERS}
+    let params = defaultParams(req, "assembling-machine-2", withStack)
+    assert.equal(buildColumnBlueprint(params, req, withStack).ok, true)
+    // A layout which uses one is refused when they are not allowed.
+    let refused = validateParams({...params, inputInserter: "stack-inserter"}, req, data)
+    assert.ok(refused.errors.some(e => /inputInserter must be one of/.test(e)))
+    let accepted = validateParams({...params, inputInserter: "stack-inserter"}, req, withStack)
+    assert.ok(!accepted.errors.some(e => /inputInserter must be one of/.test(e)))
+})
+
+await test("a line may use a stack inserter where it saves machines, and the layout validates", () => {
+    let withStack = {...data, allowedInserters: STACK_INSERTERS}
+    let spec = {root: {recipe: "inserter", machine: "assembling-machine-1", rate: 2}, east: inserterPlan.east.map(s => ({...s, machine: "assembling-machine-1"})), west: [{recipe: "iron-gear-wheel", machine: "assembling-machine-1"}]}
+    let params = defaultLineParams(spec, withStack)
+    let result = buildLineBlueprint(params, spec, withStack)
+    assert.ok(result.ok, result.errors.join("; "))
+    assert.ok(result.entities.some(e => e.name === "stack-inserter"))
+    assert.deepEqual(validateLayout(result.entities, withStack).errors, [])
 })
 
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)

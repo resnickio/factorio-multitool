@@ -6,7 +6,7 @@ import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
 import { makeBlueprint } from "./build.js"
 import {
     entityInfo, beltThroughput, inserterThroughput, machineCrafts, lookupRecipe,
-    fluidIngredients, fluidInputPorts, insertRows, WEST, ALLOWED_INSERTERS, ALLOWED_POLES,
+    fluidIngredients, fluidInputPorts, insertRows, WEST, allowedInserters, ALLOWED_POLES,
 } from "./entities.js"
 
 export { ineligibleReason }
@@ -43,7 +43,7 @@ export function describeTask(requirement, machine, data) {
         options: {
             columns: [1, 2],
             belts: availableBelts(data).map(b => ({name: b, items_per_second: beltThroughput(data.blueprint_entities[b])})),
-            inserters: ALLOWED_INSERTERS.map(n => ({
+            inserters: allowedInserters(data).map(n => ({
                 name: n,
                 from_belt_per_second: Number(inserterThroughput(data.blueprint_entities[n], true).toFixed(2)),
                 to_belt_per_second: Number(inserterThroughput(data.blueprint_entities[n], false).toFixed(2)),
@@ -100,8 +100,8 @@ export function defaultParams(requirement, machine, data, fixed = {}) {
     let belts = availableBelts(data)
     let inserterChoices = []
     for (let count of [1, 2]) {
-        for (let name of ALLOWED_INSERTERS) {
-            inserterChoices.push({name, count, cost: count * (1 + ALLOWED_INSERTERS.indexOf(name))})
+        for (let name of allowedInserters(data)) {
+            inserterChoices.push({name, count, cost: count * (1 + allowedInserters(data).indexOf(name))})
         }
     }
     inserterChoices.sort((a, b) => a.cost - b.cost)
@@ -129,8 +129,8 @@ export function defaultParams(requirement, machine, data, fixed = {}) {
     return {
         ...base, machines: fewest, columns: 2,
         inputBelt: belts[belts.length - 1], outputBelt: belts[belts.length - 1],
-        inputInserter: ALLOWED_INSERTERS[ALLOWED_INSERTERS.length - 1], inputInserters: 2,
-        outputInserter: ALLOWED_INSERTERS[ALLOWED_INSERTERS.length - 1], outputInserters: 2,
+        inputInserter: allowedInserters(data).at(-1), inputInserters: 2,
+        outputInserter: allowedInserters(data).at(-1), outputInserters: 2,
     }
 }
 

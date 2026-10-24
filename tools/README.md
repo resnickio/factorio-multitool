@@ -33,3 +33,12 @@ dump omits), `--sheet-prefix`.
 Add the dataset to `MODIFICATIONS` in `settings.js` afterwards.
 
 `serve.mjs` is a tiny static server for trying the result locally.
+
+## Probes
+
+`tools/probes/*.lua` are snippets for `game-probe.mjs` (`node tools/game-probe.mjs
+--lua tools/probes/inserter-chests.lua`) which measured what each inserter moves
+in the game: between chests, from a compressed belt and onto a belt. They are
+where the stack inserter figures in `blueprint/entities.js` come from. A snippet
+which needs game time to pass sets `DEFER = true` and calls `finish()` when it
+has its results.
