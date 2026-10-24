@@ -5,6 +5,7 @@ import { previewLayout } from "./blueprint/build.js"
 import { askForLayout, OLLAMA_URL } from "./blueprint/llm.js"
 import { entityInfo, lookupRecipe, machineCrafts } from "./blueprint/entities.js"
 import { chainIneligibleReason, defaultChainParams, buildChainBlueprint } from "./blueprint/chain.js"
+import { renderPreview } from "./blueprint_preview.js"
 
 // The Blueprint tab: turns the furnace and assembler rows in the current
 // solution into blueprint strings for the game, singly or as chains.
@@ -217,12 +218,7 @@ function renderResult(root) {
                 .text(`${where} With two columns, each side has its own pipes.`)
         }
     }
-    box.append("pre")
-        .classed("blueprint-preview", true)
-        .text(output.preview)
-    box.append("div")
-        .classed("hint", true)
-        .text("Belts flow down (v); ) and ( are inserters, F furnaces, A assemblers, P poles, = pipes, O underground pipes.")
+    showPreview(box)
     box.append("textarea")
         .classed("blueprint-text", true)
         .attr("readonly", true)
@@ -238,6 +234,21 @@ function renderResult(root) {
         .classed("hint", true)
         .text(" In the game, click the import-string button in the blueprint library and paste it.")
     renderLog(box)
+}
+
+// The picture of the layout, and the same in plain text.
+function showPreview(box) {
+    renderPreview(box, output.entities, {wires: output.blueprint.wires, connections: output.connections})
+    let details = box.append("details")
+        .classed("blueprint-text-preview", true)
+    details.append("summary")
+        .text("Text version")
+    details.append("pre")
+        .classed("blueprint-preview", true)
+        .text(output.preview)
+    details.append("div")
+        .classed("hint", true)
+        .text("Belts flow down (v) or west (<); ) and ( are inserters, F furnaces, A assemblers, P poles, = pipes, O underground pipes.")
 }
 
 function renderChainResult(box) {
@@ -273,12 +284,7 @@ function renderChainResult(box) {
     box.append("div")
         .classed("hint", true)
         .text(`${supplies}; both flow west into the layout. Take ${output.connections.output.item} from the bottom of the belt on the far left. Modules are not included.`)
-    box.append("pre")
-        .classed("blueprint-preview", true)
-        .text(output.preview)
-    box.append("div")
-        .classed("hint", true)
-        .text("Belts flow down (v) or west (<); ) and ( are inserters, A assemblers, P poles.")
+    showPreview(box)
     box.append("textarea")
         .classed("blueprint-text", true)
         .attr("readonly", true)
