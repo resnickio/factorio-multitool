@@ -1070,5 +1070,17 @@ await test("with exact counts a model's column and chain machine counts are the 
     assert.equal(JSON.parse(chain.seen[0].messages[1].content).exact_counts, true)
 })
 
+await test("inserter speeds are what the game measured: no swing overhead, seven tenths from a belt", () => {
+    let near = (a, b) => Math.abs(a - b) < 0.01
+    let ins = name => data.blueprint_entities[name]
+    // Between chests the game measured 0.87 (regular) and 2.5 (fast).
+    assert.ok(near(inserterThroughput(ins("inserter"), false), 0.84))
+    assert.ok(near(inserterThroughput(ins("fast-inserter"), false), 2.4))
+    // From a belt in a layout, a fast inserter moved 1.72 and a long-handed one 0.86.
+    assert.ok(near(inserterThroughput(ins("fast-inserter"), true), 1.68))
+    assert.ok(near(inserterThroughput(ins("long-handed-inserter"), true), 0.84))
+    assert.ok(near(inserterThroughput(ins("inserter"), true), 0.588))
+})
+
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)
 process.exit(failures === 0 ? 0 : 1)

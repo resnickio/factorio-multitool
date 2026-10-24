@@ -55,20 +55,28 @@ export function beltThroughput(info) {
     return info.speed * 480
 }
 
-// Approximate items per second moved by an inserter, from a chest. A swing is
-// a rotation out and back, plus a little overhead. Taking from a moving belt
-// is slower; the factor is a conservative estimate.
+// Items per second moved by an inserter, tuned to what the game does (the
+// scripts in tools/probes measured it). A swing is one rotation out and back,
+// so between chests an inserter makes rotation_speed x 60 swings a second: a
+// regular one 0.84 and a fast one 2.4 (the game gave 0.87 and 2.5).
 //
-// Measured in the game with no research: a stack inserter moves about 5 items
-// a swing between chests, but about 3.3 from a compressed belt and as many as
-// a belt lane carries onto one, so its stack is counted as at most 2 from a
-// belt and 3 onto one. (The bulk inserter has no stack bonus and moves what a
-// fast inserter does.)
+// From a belt the rate depends on how full the belt is. A belt which is full
+// or backed up gave 0.73 to 0.80 (regular), 2.1 to 2.4 (fast) and 1.0
+// (long-handed), nearly the chest rate. But belts in a layout carry what is
+// asked of them, and then inserters get less: fed at a set rate, a fast
+// inserter took 0.87 of 1/s, 1.77 of 2/s and 2.27 of 3/s, and in a finished
+// line a fast inserter moved 1.72/s and a long-handed one 0.86/s. Seven tenths
+// of the chest rate (1.68 and 0.84) is what those add up to, so it is counted.
+//
+// A stack inserter moves about 5 items a swing between chests, but about 3.3
+// from a compressed belt and as many as a belt lane carries onto one, so its
+// stack is counted as at most 2 from a belt and 3 onto one. (The bulk inserter
+// has no stack bonus and moves what a fast inserter does.)
+export const BELT_PICKUP_FACTOR = 0.7
 export function inserterThroughput(info, fromBelt) {
-    let cycleTicks = 1 / info.rotation_speed + 1
     let stack = Math.min(1 + info.stack_size_bonus, fromBelt ? 2 : 3)
-    let rate = TICKS_PER_SECOND * stack / cycleTicks
-    return fromBelt ? rate * 0.7 : rate
+    let rate = TICKS_PER_SECOND * info.rotation_speed * stack
+    return fromBelt ? rate * BELT_PICKUP_FACTOR : rate
 }
 
 // Crafts per second of one machine on a recipe.

@@ -8,6 +8,11 @@ export const SAMPLES = {
     "steel-two-columns": {recipe: "steel-plate", rate: 3.75, override: {columns: 2}},
     "circuits-assembler": {recipe: "electronic-circuit", rate: 3, machine: "assembling-machine-2"},
     "circuits-asm1-4": {recipe: "electronic-circuit", rate: 4, machine: "assembling-machine-1"},
+    // Columns whose input inserters are the limit, to calibrate what they move:
+    // two assembling machine 1 of gears need 2 plates a second each.
+    "gears-limited-regular": {recipe: "iron-gear-wheel", rate: 2, machine: "assembling-machine-1", override: {exact: true, machines: 2, inputInserter: "inserter", inputInserters: 1, outputInserter: "fast-inserter", outputInserters: 2}},
+    "gears-limited-fast": {recipe: "iron-gear-wheel", rate: 2, machine: "assembling-machine-1", override: {exact: true, machines: 2, inputInserter: "fast-inserter", inputInserters: 1, outputInserter: "fast-inserter", outputInserters: 2}},
+    "gears-limited-fast-out": {recipe: "iron-gear-wheel", rate: 2, machine: "assembling-machine-1", override: {exact: true, machines: 2, inputInserter: "fast-inserter", inputInserters: 2, outputInserter: "inserter", outputInserters: 1}},
     "gears-assembler": {recipe: "iron-gear-wheel", rate: 2, machine: "assembling-machine-2"},
     "plastic-chemical-plant": {recipe: "plastic-bar", rate: 4, machine: "chemical-plant"},
     "battery-chemical-plant": {recipe: "battery", rate: 2, machine: "chemical-plant", override: {columns: 2}},
