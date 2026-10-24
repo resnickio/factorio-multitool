@@ -118,4 +118,6 @@ export const FLUID_MACHINES = ["chemical-plant"]
 // The inserters this generator knows how to reason about: no stack bonuses,
 // and reaching one tile.
 export const ALLOWED_INSERTERS = ["inserter", "fast-inserter"]
+// Inserters which reach over the nearest belt to the one behind it.
+export const ALLOWED_LONG_INSERTERS = ["long-handed-inserter"]
 export const ALLOWED_POLES = ["small-electric-pole", "medium-electric-pole"]

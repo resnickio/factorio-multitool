@@ -79,4 +79,28 @@ SAMPLES["circuits-west-branch"] = {
     },
 }
 
+// An inserter takes three solids: gears from the west, circuits from the east
+// (second belt), iron plate on a feeder.
+SAMPLES["inserters-from-parts"] = {
+    rate: 2,
+    line: {
+        root: {recipe: "inserter", machine: "assembling-machine-2"},
+        east: [{recipe: "electronic-circuit", machine: "assembling-machine-2"}],
+        west: [{recipe: "iron-gear-wheel", machine: "assembling-machine-2"}],
+    },
+}
+
+// Iron and copper plates all the way to inserters.
+SAMPLES["inserters-from-plates"] = {
+    rate: 2,
+    line: {
+        root: {recipe: "inserter", machine: "assembling-machine-2"},
+        east: [
+            {recipe: "electronic-circuit", machine: "assembling-machine-2"},
+            {recipe: "copper-cable", machine: "assembling-machine-2"},
+        ],
+        west: [{recipe: "iron-gear-wheel", machine: "assembling-machine-2"}],
+    },
+}
+
 export const DEFAULT_MACHINE = "electric-furnace"

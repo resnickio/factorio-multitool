@@ -2,7 +2,7 @@
 
 import {
     entityInfo, beltThroughput, inserterThroughput, machineCrafts, lookupRecipe,
-    isMachineType, solidItems, ALLOWED_INSERTERS, ALLOWED_POLES, NORTH, EAST, SOUTH, WEST, STEP,
+    isMachineType, solidItems, ALLOWED_INSERTERS, ALLOWED_LONG_INSERTERS, ALLOWED_POLES, NORTH, EAST, SOUTH, WEST, STEP,
     opposite, fluidInputPorts, fluidIngredients, insertRows, FLUID_MACHINES,
 } from "./entities.js"
 
@@ -11,7 +11,9 @@ import {
 const PIPE_THROUGHPUT = 1000
 
 // Why a recipe cannot be built in a column by the given machine, or null.
-export function ineligibleReason(data, recipeKey, machineName) {
+// maxSolids is how many solid ingredients the layout can bring: two on one
+// belt, or more where there is a second belt.
+export function ineligibleReason(data, recipeKey, machineName, maxSolids = 2) {
     let info = data.blueprint_entities[machineName]
     if (!info || !isMachineType(info.type)) {
         return `${machineName} is not an electric crafting machine`
@@ -41,8 +43,10 @@ export function ineligibleReason(data, recipeKey, machineName) {
             return `${name} has ${fluids.length} fluid ingredients but ${machineName} has ${info.fluid_inputs.length} fluid inputs`
         }
     }
-    if (solidIngredients > 2) {
-        return `${name} has ${solidIngredients} solid ingredients; a column can feed two on one belt`
+    if (solidIngredients > maxSolids) {
+        return maxSolids === 2
+            ? `${name} has ${solidIngredients} solid ingredients; a column can feed two on one belt`
+            : `${name} has ${solidIngredients} solid ingredients; at most ${maxSolids} can be brought in`
     }
     return null
 }
@@ -81,8 +85,10 @@ export function validateParams(params, requirement, data) {
     let okIi = known("inputInserter", ["inserter"])
     let okOi = known("outputInserter", ["inserter"])
     let okPole = known("pole", ["electric-pole"])
-    if (okIi && !ALLOWED_INSERTERS.includes(params.inputInserter)) {
-        errors.push(`inputInserter must be one of ${ALLOWED_INSERTERS.join(", ")}`)
+    // Long-handed inserters take from the second belt of a line's final recipe.
+    let inputKinds = params.longInput ? ALLOWED_LONG_INSERTERS : ALLOWED_INSERTERS
+    if (okIi && !inputKinds.includes(params.inputInserter)) {
+        errors.push(`inputInserter must be one of ${inputKinds.join(", ")}`)
     }
     if (okOi && !ALLOWED_INSERTERS.includes(params.outputInserter)) {
         errors.push(`outputInserter must be one of ${ALLOWED_INSERTERS.join(", ")}`)
@@ -221,8 +227,10 @@ export function validateLayout(entities, data) {
             continue
         }
         let [dx, dy] = STEP[e.direction]
-        let pick = at(e.x + dx, e.y + dy)
-        let drop = at(e.x - dx, e.y - dy)
+        // A long-handed inserter picks up and drops two tiles away.
+        let reach = entityInfo(data, e.name).pickup_distance || 1
+        let pick = at(e.x + dx * reach, e.y + dy * reach)
+        let drop = at(e.x - dx * reach, e.y - dy * reach)
         if (!connectable(pick)) {
             errors.push(`${e.name} at (${e.x},${e.y}) has nothing to pick up from`)
         }
