@@ -30,6 +30,9 @@ let busy = false
 // Stack inserters need a late technology: they are used only when asked for,
 // and by default when the research state limits the techs and includes it.
 let allowStack = null
+// Build lines with the calculator's own machine counts, even if the inserters
+// then limit the rate (which the result says).
+let exactCounts = false
 
 function stackAllowed() {
     if (allowStack !== null) {
@@ -118,13 +121,13 @@ async function generateChain(chain) {
             if (apiKey === "") {
                 throw new Error("Enter an API key, or choose another way to build.")
             }
-            let asked = await askForChainLayout({provider, apiKey, model: models.anthropic, requirement, machines, data: bpData()})
+            let asked = await askForChainLayout({provider, apiKey, model: models.anthropic, requirement, machines, data: bpData(), exact: exactCounts})
             output = {...asked, chain: asked.params}
         } else if (provider === "ollama") {
-            let asked = await askForChainLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machines, data: bpData()})
+            let asked = await askForChainLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machines, data: bpData(), exact: exactCounts})
             output = {...asked, chain: asked.params}
         } else {
-            let params = defaultChainParams(requirement, machines, bpData())
+            let params = defaultChainParams(requirement, machines, bpData(), {exact: exactCounts})
             output = {...buildChainBlueprint(params, requirement, bpData()), chain: params, attempts: 0, log: []}
         }
     } catch (e) {
@@ -162,12 +165,12 @@ async function generate(req) {
             if (apiKey === "") {
                 throw new Error("Enter an API key, or choose another way to build.")
             }
-            output = await askForLayout({provider, apiKey, model: models.anthropic, requirement, machine, data: bpData()})
+            output = await askForLayout({provider, apiKey, model: models.anthropic, requirement, machine, data: bpData(), exact: exactCounts})
         } else if (provider === "ollama") {
             // A local model costs nothing to ask again, so give it more tries.
-            output = await askForLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machine, data: bpData()})
+            output = await askForLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machine, data: bpData(), exact: exactCounts})
         } else {
-            let params = defaultParams(requirement, machine, bpData())
+            let params = defaultParams(requirement, machine, bpData(), {exact: exactCounts})
             output = {...buildColumnBlueprint(params, requirement, bpData()), params, attempts: 0, log: []}
         }
     } catch (e) {
@@ -386,13 +389,13 @@ async function generateLine(line) {
             if (apiKey === "") {
                 throw new Error("Enter an API key, or choose another way to build.")
             }
-            let asked = await askForLineLayout({provider, apiKey, model: models.anthropic, spec: line.spec, data: bpData()})
+            let asked = await askForLineLayout({provider, apiKey, model: models.anthropic, spec: line.spec, data: bpData(), exact: exactCounts})
             output = {...asked, line: {spec: line.spec, params: asked.params}}
         } else if (provider === "ollama") {
-            let asked = await askForLineLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, spec: line.spec, data: bpData()})
+            let asked = await askForLineLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, spec: line.spec, data: bpData(), exact: exactCounts})
             output = {...asked, line: {spec: line.spec, params: asked.params}}
         } else {
-            let params = defaultLineParams(line.spec, bpData())
+            let params = defaultLineParams(line.spec, bpData(), {exact: exactCounts})
             output = {...buildLineBlueprint(params, line.spec, bpData()), line: {spec: line.spec, params}, attempts: 0, log: []}
         }
     } catch (e) {
@@ -648,6 +651,17 @@ function renderProviderControls(panel) {
         })
     stackBox.append("span")
         .text(" Allow stack inserters (needs the Stack inserter technology)")
+    let exactBox = panel.append("label")
+        .style("display", "block")
+    exactBox.append("input")
+        .attr("type", "checkbox")
+        .property("checked", exactCounts)
+        .on("change", function() {
+            exactCounts = this.checked
+            renderBlueprint()
+        })
+    exactBox.append("span")
+        .text(" Exact counts: use the calculator's number of machines, even if the inserters then limit the rate (the result says by how much)")
     if (provider === "none") {
         return
     }

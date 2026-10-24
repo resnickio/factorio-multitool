@@ -2,7 +2,7 @@
 // which picks one without it, and the pipeline that checks and places it.
 
 import { placeColumns } from "./columns.js"
-import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
+import { validateParams, validateLayout, exactCountWarning, ineligibleReason } from "./validate.js"
 import { makeBlueprint } from "./build.js"
 import {
     entityInfo, beltThroughput, inserterThroughput, machineCrafts, lookupRecipe,
@@ -19,7 +19,7 @@ function availableBelts(data) {
 
 // What the model is told. The calculator supplies the numbers; the model picks
 // the parameters from fixed lists.
-export function describeTask(requirement, machine, data) {
+export function describeTask(requirement, machine, data, options = {}) {
     let recipe = lookupRecipe(data, requirement.recipe)
     let info = entityInfo(data, machine)
     let crafts = machineCrafts(info, recipe)
@@ -28,6 +28,7 @@ export function describeTask(requirement, machine, data) {
     let ports = fluids.length === 0 ? [] : fluidInputPorts(info, WEST).slice(0, fluids.length)
     return {
         task: "machine_column",
+        exact_counts: Boolean(options.exact),
         recipe: requirement.recipe,
         ingredients: recipe.ingredients.map(i => ({
             item: i.name,
@@ -63,7 +64,7 @@ Fluid ingredients (marked "fluid": true) arrive by pipe: they use no belt lane a
 - "input_inserter_count", "output_inserter_count": 1 or 2 inserters per machine on each side (the input count at most max_input_inserters_per_machine). All of a machine's ingredients arrive through its input inserters together, so they must move the sum of the ingredient rates (scaled by how busy the machine is); the output inserters must move the output rate. Prefer fewer and cheaper inserters that are sufficient.
 - "pole": a pole name from options.poles.
 - "notes": one short sentence on your choices.
-Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why.`
+Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why. If "exact_counts" is true, the aim is the fewest machines: use exactly fewest_machines, and pick the fastest inserters you can (two per side where they fit), because the column may then run a little under its rate and that is accepted.`
 
 // Extracts the JSON object from a model reply.
 export function parseReply(text) {
@@ -87,6 +88,14 @@ export function parseReply(text) {
     }
 }
 
+// The fewest machines a recipe needs at full speed, which is what the
+// calculator counts.
+export function fewestMachines(requirement, machine, data) {
+    let recipe = lookupRecipe(data, requirement.recipe)
+    let outPer = recipe.results[0].amount * machineCrafts(entityInfo(data, machine), recipe)
+    return Math.ceil(requirement.rate / outPer - 1e-9)
+}
+
 // Picks parameters without a model: the fewest machines which a cheap set of
 // belts and inserters can serve, one column unless two are needed. Extra
 // machines run less busy, which eases the inserters, so when nothing works at
@@ -106,6 +115,9 @@ export function defaultParams(requirement, machine, data, fixed = {}) {
     }
     inserterChoices.sort((a, b) => a.cost - b.cost)
     let base = {machine, recipe: requirement.recipe, pole: "medium-electric-pole", pipe: "pipe", pipeToGround: "pipe-to-ground"}
+    if (fixed.exact) {
+        return exactParams(requirement, base, fewest, inserterChoices, belts, data, fixed)
+    }
     for (let machines = fewest; machines <= fewest * 3 + 4; machines++) {
         for (let columns of fixed.columns ? [fixed.columns] : [1, 2]) {
             for (let input of inserterChoices) {
@@ -134,6 +146,48 @@ export function defaultParams(requirement, machine, data, fixed = {}) {
     }
 }
 
+// The calculator's own machine count, with the inserters which keep the machines
+// busiest (then the cheapest) and the first belts which carry the load.
+function exactParams(requirement, base, machines, inserterChoices, belts, data, fixed) {
+    let best = null
+    for (let columns of fixed.columns ? [fixed.columns] : [1, 2]) {
+        for (let inputBelt of fixed.inputBelt ? [fixed.inputBelt] : belts) {
+            for (let outputBelt of fixed.outputBelt ? [fixed.outputBelt] : belts) {
+                for (let input of inserterChoices) {
+                    for (let output of inserterChoices) {
+                        let params = {
+                            ...base, machines, columns, inputBelt, outputBelt, exact: true,
+                            inputInserter: input.name, inputInserters: input.count,
+                            outputInserter: output.name, outputInserters: output.count,
+                        }
+                        let checked = validateParams(params, requirement, data)
+                        if (checked.errors.length > 0) {
+                            continue
+                        }
+                        let cost = input.cost + output.cost
+                        let beltCost = belts.indexOf(inputBelt) + belts.indexOf(outputBelt)
+                        let better = best === null
+                            || checked.stats.speedFraction > best.fraction + 1e-9
+                            || (Math.abs(checked.stats.speedFraction - best.fraction) <= 1e-9 && (beltCost < best.beltCost || (beltCost === best.beltCost && cost < best.cost)))
+                        if (better) {
+                            best = {params, fraction: checked.stats.speedFraction, cost, beltCost}
+                        }
+                    }
+                }
+            }
+        }
+        if (best) {
+            return best.params
+        }
+    }
+    return {
+        ...base, machines, columns: 2, exact: true,
+        inputBelt: belts[belts.length - 1], outputBelt: belts[belts.length - 1],
+        inputInserter: allowedInserters(data).at(-1), inputInserters: 2,
+        outputInserter: allowedInserters(data).at(-1), outputInserters: 2,
+    }
+}
+
 // Validates, places and re-validates. Returns {ok, errors, warnings, stats,
 // entities, blueprint}.
 export function buildColumnBlueprint(params, requirement, data) {
@@ -148,6 +202,13 @@ export function buildColumnBlueprint(params, requirement, data) {
         return {ok: false, errors: layout.errors, warnings: checked.warnings, stats: checked.stats, entities: placed.entities}
     }
     let recipe = lookupRecipe(data, requirement.recipe)
+    if (params.exact) {
+        let fraction = checked.stats.speedFraction === undefined ? 1 : checked.stats.speedFraction
+        checked.stats.estimatedRate = requirement.rate * fraction
+        if (fraction < 1 - 1e-9) {
+            checked.warnings.unshift(exactCountWarning(recipe.localized_name.en, fraction, requirement.rate))
+        }
+    }
     let label = `${params.machines}x ${params.machine}: ${recipe.localized_name.en}`
     let blueprint = makeBlueprint(placed.entities, label, [params.machine, recipe.results[0].name], data)
     return {ok: true, errors: [], warnings: checked.warnings, stats: checked.stats, entities: placed.entities, connections: placed.connections, blueprint}

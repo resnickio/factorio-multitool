@@ -20,7 +20,7 @@ import {
     entityInfo, lookupRecipe, insertRows, fluidIngredients, beltThroughput, inserterThroughput, machineCrafts,
     allowedInserters, ALLOWED_POLES, NORTH, SOUTH, EAST, WEST,
 } from "./entities.js"
-import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
+import { validateParams, validateLayout, ineligibleReason, exactCountWarning } from "./validate.js"
 import { defaultParams } from "./dsl.js"
 import { makeBlueprint } from "./build.js"
 
@@ -83,7 +83,7 @@ function stageParams(params, which, data) {
     let stage = params[which]
     let recipe = which === "upstream" ? params.upstreamRecipe : params.downstreamRecipe
     return {
-        pipe: "pipe", pipeToGround: "pipe-to-ground", pole: params.pole,
+        pipe: "pipe", pipeToGround: "pipe-to-ground", pole: params.pole, exact: params.exact,
         columns: 1, recipe,
         machine: stage.machine, machines: stage.machines,
         inputBelt: which === "upstream" ? stage.inputBelt : params.mid,
@@ -107,13 +107,15 @@ export function validateChain(params, requirement, data) {
         return {errors: [reason], warnings, stats}
     }
     let st = stageRequirements(requirement, data)
+    let fractions = []
     for (let which of ["upstream", "downstream"]) {
         let recipe = lookupRecipe(data, which === "upstream" ? st.upstream.recipe : st.downstream.recipe)
         let checked = validateParams(stageParams(params, which, data), st[which], data)
         for (let e of checked.errors) {
             errors.push(`${which} (${recipe.localized_name.en}): ${e}`)
         }
-        warnings.push(...checked.warnings)
+        warnings.push(...checked.warnings.map(w => `${which} (${recipe.localized_name.en}): ${w}`))
+        fractions.push([recipe.localized_name.en, checked.stats.speedFraction === undefined ? 1 : checked.stats.speedFraction])
         stats[which] = checked.stats
     }
     if (st.other) {
@@ -128,7 +130,27 @@ export function validateChain(params, requirement, data) {
             errors.push(`the feeder belt (${params.supply}) carries ${supplyCap}/s of ${st.other.item}, but ${st.other.rate.toFixed(2)}/s is needed`)
         }
     }
+    // With exact counts, a stage whose inserters cannot keep its machines busy
+    // lowers the rate of the whole chain.
+    if (params.exact && errors.length === 0) {
+        let [part, fraction] = fractions.reduce((a, b) => (b[1] < a[1] ? b : a))
+        stats.estimatedRate = requirement.rate * fraction
+        if (fraction < 1 - 1e-9) {
+            warnings.unshift(exactCountWarning(part, fraction, requirement.rate))
+        }
+    }
     return {errors, warnings, stats}
+}
+
+// The fewest machines each stage of a chain needs at full speed, which is what
+// the calculator counts: {upstream, downstream}.
+export function chainMinimums(requirement, machines, data) {
+    let st = stageRequirements(requirement, data)
+    let need = (which, machine) => {
+        let recipe = lookupRecipe(data, st[which].recipe)
+        return Math.ceil(st[which].rate / (recipe.results[0].amount * machineCrafts(entityInfo(data, machine), recipe)) - 1e-9)
+    }
+    return {upstream: need("upstream", machines.upstream), downstream: need("downstream", machines.downstream)}
 }
 
 function place(params, data, poleStep) {
@@ -245,11 +267,16 @@ export function placeChain(params, data) {
 // Picks the cheapest valid parameters: for each middle belt tier from the
 // slowest, the cheapest layout of each stage around it.
 //   machines: {upstream, downstream} machine names
-export function defaultChainParams(requirement, machines, data) {
+//
+// With options.exact, each stage has the calculator's own machine count and
+// the inserters which keep it busiest; the chain then makes less than asked
+// where inserters limit it (validateChain says how much).
+export function defaultChainParams(requirement, machines, data, options = {}) {
+    let exact = Boolean(options.exact)
     let st = stageRequirements(requirement, data)
     let belts = availableBelts(data)
     let build = (mid, up, down) => ({
-        mid,
+        mid, exact,
         supply: belts.find(b => !st.other || beltThroughput(entityInfo(data, b)) >= st.other.rate) || belts[belts.length - 1],
         pole: "medium-electric-pole",
         upstreamRecipe: st.upstream.recipe,
@@ -270,10 +297,10 @@ export function defaultChainParams(requirement, machines, data) {
     // Where that is too much for the belts, the exact rate is tried.
     let scaled = (rate, factor) => ({...rate, rate: rate.rate * factor})
     let last = null
-    for (let factor of [HEADROOM, 1]) {
+    for (let factor of exact ? [1] : [HEADROOM, 1]) {
         for (let mid of belts) {
-            let up = defaultParams(scaled(st.upstream, factor), machines.upstream, data, {columns: 1, outputBelt: mid})
-            let down = defaultParams(scaled(st.downstream, factor), machines.downstream, data, {columns: 1, inputBelt: mid})
+            let up = defaultParams(scaled(st.upstream, factor), machines.upstream, data, {columns: 1, exact, outputBelt: mid})
+            let down = defaultParams(scaled(st.downstream, factor), machines.downstream, data, {columns: 1, exact, inputBelt: mid})
             last = build(mid, up, down)
             if (validateChain(last, requirement, data).errors.length === 0) {
                 return last
@@ -307,7 +334,7 @@ export function buildChainBlueprint(params, requirement, data) {
 
 // What a model is told about a chain: both stages, and the loads on the shared
 // belt. The calculator supplies the numbers; the model picks the parameters.
-export function describeChainTask(requirement, machines, data) {
+export function describeChainTask(requirement, machines, data, options = {}) {
     let st = stageRequirements(requirement, data)
     let stage = which => {
         let recipe = lookupRecipe(data, st[which].recipe)
@@ -325,6 +352,7 @@ export function describeChainTask(requirement, machines, data) {
     }
     return {
         task: "chain",
+        exact_counts: Boolean(options.exact),
         upstream: stage("upstream"),
         downstream: stage("downstream"),
         shared_belt: {
@@ -353,11 +381,11 @@ export const CHAIN_SYSTEM_PROMPT = `You design a chain of two columns of craftin
 - "upstream": an object with "machines" (integer, at least fewest_machines), "input_belt" (a belt from options.belts for the upstream machines' own ingredients), "input_inserter", "output_inserter" (names from options.inserters), and "input_inserter_count", "output_inserter_count" (1 or 2 per machine).
 - "downstream": an object with "machines" (at least fewest_machines), "output_belt" (a belt from options.belts), "input_inserter", "output_inserter", "input_inserter_count", "output_inserter_count" as for upstream.
 - "notes": one short sentence on your choices.
-Machines only work as much as is needed, so extra machines each work less, which lowers the load on every inserter and belt; a machine costs far more than an inserter, so first fix a shortfall in inserter speed with a second inserter on that side or a fast-inserter, and add machines beyond the fewest only if that is still not enough. If you are told how many machines would be enough, use at least that many. A stage's flow is scaled by how busy its machines are: required_output_per_second / (machines x output_per_second_at_full_speed). An input belt carries (machines x each ingredient's per_second_at_full_speed x how busy), and with two ingredients each is kept to its own lane, so each can use only half the belt's rate (with one, both lanes). Inserters only drop onto the far lane of a belt, so each column's output goes onto one lane and its output belt carries only half its listed rate. An input inserter must move the sum of the machine's ingredient rates (scaled by how busy it is); an output inserter must move the output rate; their rates are in options.inserters. Prefer the cheapest belts and inserters that are sufficient. Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why.`
+Machines only work as much as is needed, so extra machines each work less, which lowers the load on every inserter and belt; a machine costs far more than an inserter, so first fix a shortfall in inserter speed with a second inserter on that side or a fast-inserter, and add machines beyond the fewest only if that is still not enough. If you are told how many machines would be enough, use at least that many. A stage's flow is scaled by how busy its machines are: required_output_per_second / (machines x output_per_second_at_full_speed). An input belt carries (machines x each ingredient's per_second_at_full_speed x how busy), and with two ingredients each is kept to its own lane, so each can use only half the belt's rate (with one, both lanes). Inserters only drop onto the far lane of a belt, so each column's output goes onto one lane and its output belt carries only half its listed rate. An input inserter must move the sum of the machine's ingredient rates (scaled by how busy it is); an output inserter must move the output rate; their rates are in options.inserters. Prefer the cheapest belts and inserters that are sufficient. Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why. If "exact_counts" is true, the aim is the fewest machines: use exactly fewest_machines for both stages, and pick the fastest inserters you can (two per side where they fit), because the chain may then run a little under its rate and that is accepted.`
 
 // Reads a model's reply into chain parameters. The recipes and machines are
 // fixed by the task, so the model cannot change them.
-export function parseChainReply(text, requirement, machines) {
+export function parseChainReply(text, requirement, machines, options = {}) {
     let start = text.indexOf("{")
     let end = text.lastIndexOf("}")
     if (start === -1 || end === -1) {
@@ -366,7 +394,8 @@ export function parseChainReply(text, requirement, machines) {
     let reply = JSON.parse(text.slice(start, end + 1))
     let up = reply.upstream || {}
     let down = reply.downstream || {}
-    return {
+    let parsed = {
+        exact: Boolean(options.exact),
         mid: reply.mid_belt,
         supply: reply.supply_belt,
         pole: reply.pole,
@@ -384,4 +413,12 @@ export function parseChainReply(text, requirement, machines) {
             outputInserter: down.output_inserter, outputInserters: down.output_inserter_count,
         },
     }
+    // With exact counts (options.exact, and the data in options.data) the
+    // machines are the calculator's, whatever was asked.
+    if (options.exact) {
+        let minimums = chainMinimums(requirement, machines, options.data)
+        parsed.upstream.machines = minimums.upstream
+        parsed.downstream.machines = minimums.downstream
+    }
+    return parsed
 }

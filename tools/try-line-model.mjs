@@ -1,5 +1,5 @@
 // Tries a local Ollama model on production-line layout tasks.
-//   node tools/try-line-model.mjs [--model qwen3.8:latest] [--attempts 6] [--sample name] [--save file] [--stack true]
+//   node tools/try-line-model.mjs [--model qwen3.8:latest] [--attempts 6] [--sample name] [--save file] [--stack true] [--exact true]
 // With --save, the first accepted layout's blueprint string is written to file.
 import fs from "node:fs"
 import zlib from "node:zlib"
@@ -30,7 +30,7 @@ for (let name of names) {
     let started = Date.now()
     let result
     try {
-        result = await askForLineLayout({provider: "ollama", model, spec, data, maxAttempts: attempts})
+        result = await askForLineLayout({provider: "ollama", model, spec, data, maxAttempts: attempts, exact: args.exact === "true"})
     } catch (e) {
         console.log(`\n${name}: ERROR ${e.message}`)
         continue

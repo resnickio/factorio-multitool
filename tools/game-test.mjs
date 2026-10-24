@@ -64,12 +64,28 @@ if (sample.line) {
     let params, result
     if (args.model) {
         const { askForLineLayout } = await import("../blueprint/llm.js")
-        result = await askForLineLayout({provider: "ollama", model: args.model, maxAttempts: 6, spec, data})
+        result = await askForLineLayout({provider: "ollama", model: args.model, maxAttempts: 6, spec, data, exact: args.exact === "true"})
+        for (let w of result.warnings || []) {
+            console.log("warning:", w.slice(0, 200))
+        }
         console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
         params = result.params
     } else {
-        params = defaultLineParams(spec, data)
+        params = defaultLineParams(spec, data, {exact: args.exact === "true"})
         result = buildLineBlueprint(params, spec, data)
+        for (let w of result.warnings || []) {
+            console.log("warning:", w)
+        }
+        if (args["force-root"]) {
+            // Builds with fewer final machines than the validator accepts, to see
+            // what the game really does (the validator's estimates are conservative).
+            const { placeLine } = await import("../blueprint/line.js")
+            const { makeBlueprint } = await import("../blueprint/build.js")
+            params.root.machines = parseInt(args["force-root"], 10)
+            let placed = placeLine(params, spec, data)
+            result = {ok: true, entities: placed.entities, connections: placed.connections, blueprint: makeBlueprint(placed.entities, "forced", [spec.root.machine], data)}
+            console.log(`forced ${params.root.machines} final machines, bypassing the validator`)
+        }
     }
     if (!result.ok) {
         console.log("line rejected:\n" + result.errors.join("\n"))
@@ -91,15 +107,18 @@ if (sample.line) {
     let machines = {upstream: sample.chain.upstreamMachine, downstream: sample.chain.downstreamMachine}
     let params, result
     if (args.model) {
-        result = await askForChainLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machines, data})
+        result = await askForChainLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machines, data, exact: args.exact === "true"})
         console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
         params = result.params
         if (params && params.notes) {
             console.log("model's notes:", params.notes)
         }
     } else {
-        params = defaultChainParams(requirement, machines, data)
+        params = defaultChainParams(requirement, machines, data, {exact: args.exact === "true"})
         result = buildChainBlueprint(params, requirement, data)
+        for (let w of result.warnings || []) {
+            console.log("warning:", w.slice(0, 200))
+        }
     }
     if (!result.ok) {
         console.log("chain rejected:\n" + result.errors.join("\n"))
@@ -119,7 +138,7 @@ if (sample.line) {
     let requirement = {recipe: sample.recipe, rate: sample.rate}
     let params, result
     if (args.model) {
-        result = await askForLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machine, data})
+        result = await askForLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machine, data, exact: args.exact === "true"})
         console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
         if (!result.ok) {
             console.log(result.errors.join("\n"))
@@ -131,8 +150,11 @@ if (sample.line) {
             console.log("model's notes:", params.notes)
         }
     } else {
-        params = {...defaultParams(requirement, machine, data), ...sample.override}
+        params = {...defaultParams(requirement, machine, data, {exact: args.exact === "true"}), ...sample.override}
         result = buildColumnBlueprint(params, requirement, data)
+        for (let w of result.warnings || []) {
+            console.log("warning:", w.slice(0, 200))
+        }
         if (!result.ok) {
             console.log("layout rejected:\n" + result.errors.join("\n"))
             process.exit(1)

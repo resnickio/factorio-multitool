@@ -3,18 +3,18 @@ import fs from "node:fs"
 import zlib from "node:zlib"
 import assert from "node:assert/strict"
 import { encodeBlueprint, decodeBlueprint, gameVersion } from "../blueprint/codec.js"
-import { defaultParams, buildColumnBlueprint, parseReply, ineligibleReason } from "../blueprint/dsl.js"
+import { defaultParams, buildColumnBlueprint, parseReply, ineligibleReason, fewestMachines } from "../blueprint/dsl.js"
 import { placeColumns } from "../blueprint/columns.js"
 import { validateParams, validateLayout } from "../blueprint/validate.js"
 import { previewLayout } from "../blueprint/build.js"
 import { previewModel } from "../blueprint/preview.js"
-import { resolveLine, lineIneligibleReason, validateLine, defaultLineParams, buildLineBlueprint } from "../blueprint/line.js"
+import { resolveLine, lineIneligibleReason, validateLine, defaultLineParams, buildLineBlueprint, lineMinimums } from "../blueprint/line.js"
 import { askForLayout, askForChainLayout, askForLineLayout, listOllamaModels } from "../blueprint/llm.js"
 import { describeLineTask, LINE_SYSTEM_PROMPT, parseLineReply } from "../blueprint/line_model.js"
 import { EAST, STACK_INSERTERS, inserterThroughput } from "../blueprint/entities.js"
 import {
     stageRequirements, chainIneligibleReason, validateChain, defaultChainParams, buildChainBlueprint,
-    describeChainTask, parseChainReply, CHAIN_SYSTEM_PROMPT,
+    describeChainTask, parseChainReply, CHAIN_SYSTEM_PROMPT, chainMinimums,
 } from "../blueprint/chain.js"
 
 const data = JSON.parse(fs.readFileSync(new URL("../data/space-age-2.1.23.json", import.meta.url), "utf8"))
@@ -966,6 +966,108 @@ await test("a line may use a stack inserter where it saves machines, and the lay
     assert.ok(result.ok, result.errors.join("; "))
     assert.ok(result.entities.some(e => e.name === "stack-inserter"))
     assert.deepEqual(validateLayout(result.entities, withStack).errors, [])
+})
+
+const twoAsm1 = {
+    root: {recipe: "inserter", machine: "assembling-machine-1", rate: 2},
+    east: [{recipe: "electronic-circuit", machine: "assembling-machine-1"}, {recipe: "copper-cable", machine: "assembling-machine-1"}],
+    west: [{recipe: "iron-gear-wheel", machine: "assembling-machine-1"}],
+}
+
+await test("exact counts give the calculator's machine count and say what the line will make", () => {
+    let minimums = lineMinimums(twoAsm1, data)
+    let params = defaultLineParams(twoAsm1, data, {exact: true})
+    let result = buildLineBlueprint(params, twoAsm1, data)
+    assert.ok(result.ok, result.errors.join("; "))
+    assert.equal(params.root.machines, minimums.root)
+    assert.deepEqual(params.east.stages.map(s => s.machines), minimums.east)
+    assert.deepEqual(params.west.stages.map(s => s.machines), minimums.west)
+    // The inserters limit it, which is a warning with an estimated rate, not an error.
+    assert.ok(result.stats.estimatedRate < twoAsm1.root.rate)
+    assert.ok(result.stats.estimatedRate > twoAsm1.root.rate * 0.5)
+    assert.match(result.warnings[0], /Exact machine counts: .* about \d+% of full speed, so it makes about [\d.]+\/s of the 2.00\/s asked for/)
+    // The same machine counts are refused without the option.
+    let refused = validateLine({...params, exact: false}, twoAsm1, data)
+    assert.ok(refused.errors.length > 0)
+})
+
+await test("exact counts choose the inserters which keep the machines busiest", () => {
+    let exact = defaultLineParams(twoAsm1, data, {exact: true})
+    // Two fast inserters on the circuit stage's input, not the cheapest single one.
+    let circuits = exact.east.stages[0]
+    assert.equal(circuits.inputInserter, "fast-inserter")
+    assert.equal(circuits.inputInserters, 2)
+    // A line the inserters can carry is unchanged: no warning, the whole rate.
+    let easy = {root: {recipe: "electronic-circuit", machine: "assembling-machine-2", rate: 0.5}, east: orePlan.east, west: orePlan.west}
+    let params = defaultLineParams(easy, data, {exact: true})
+    let result = buildLineBlueprint(params, easy, data)
+    assert.ok(result.ok)
+    assert.equal(result.stats.estimatedRate, 0.5)
+    assert.deepEqual(result.warnings.filter(w => /Exact/.test(w)), [])
+})
+
+await test("with exact counts a model's machine counts are the calculator's, and it is told", async () => {
+    let good = defaultLineParams(twoAsm1, data, {exact: true})
+    let padded = {...good, root: {...good.root, machines: good.root.machines + 2}}
+    let {fetchFn, seen} = lineFetch([lineReply(padded)])
+    let r = await askForLineLayout({provider: "ollama", model: "m", spec: twoAsm1, data, fetchFn, exact: true})
+    assert.ok(r.ok, (r.errors || []).join("; "))
+    assert.equal(r.params.root.machines, lineMinimums(twoAsm1, data).root)
+    assert.equal(JSON.parse(seen[0].messages[1].content).exact_counts, true)
+    assert.ok(r.stats.estimatedRate < 2)
+})
+
+await test("exact counts for a column give the calculator's machines and the rate they make", () => {
+    let req = {recipe: "electronic-circuit", rate: 4}
+    let plain = defaultParams(req, "assembling-machine-1", data)
+    let params = defaultParams(req, "assembling-machine-1", data, {exact: true})
+    assert.ok(plain.machines > params.machines)
+    assert.equal(params.machines, fewestMachines(req, "assembling-machine-1", data))
+    assert.equal(params.inputInserters, 2)
+    let result = buildColumnBlueprint(params, req, data)
+    assert.ok(result.ok, result.errors.join("; "))
+    assert.ok(result.stats.estimatedRate < 4 && result.stats.estimatedRate > 2)
+    assert.match(result.warnings[0], /Exact machine counts: .* about \d+% of full speed, so it makes about [\d.]+\/s of the 4.00\/s asked for/)
+    assert.ok(validateParams({...params, exact: false}, req, data).errors.length > 0)
+})
+
+await test("exact counts for a chain give each stage the calculator's machines and say what it makes", () => {
+    let creq = {recipe: "electronic-circuit", rate: 3, upstream: "copper-cable"}
+    let machines = {upstream: "assembling-machine-1", downstream: "assembling-machine-1"}
+    let minimums = chainMinimums(creq, machines, data)
+    let plain = defaultChainParams(creq, machines, data)
+    let params = defaultChainParams(creq, machines, data, {exact: true})
+    assert.equal(params.upstream.machines, minimums.upstream)
+    assert.equal(params.downstream.machines, minimums.downstream)
+    assert.ok(plain.downstream.machines > params.downstream.machines)
+    let result = buildChainBlueprint(params, creq, data)
+    assert.ok(result.ok, result.errors.join("; "))
+    assert.ok(result.stats.estimatedRate < 3)
+    assert.match(result.warnings[0], /Exact machine counts: /)
+})
+
+await test("with exact counts a model's column and chain machine counts are the calculator's", async () => {
+    let req = {recipe: "electronic-circuit", rate: 4}
+    let good = defaultParams(req, "assembling-machine-1", data, {exact: true})
+    let column = lineFetch([JSON.stringify({
+        machines: good.machines + 3, columns: good.columns, input_belt: good.inputBelt, output_belt: good.outputBelt,
+        input_inserter: good.inputInserter, output_inserter: good.outputInserter,
+        input_inserter_count: good.inputInserters, output_inserter_count: good.outputInserters, pole: good.pole,
+    })])
+    let r = await askForLayout({provider: "ollama", model: "m", requirement: req, machine: "assembling-machine-1", data, fetchFn: column.fetchFn, exact: true})
+    assert.ok(r.ok, (r.errors || []).join("; "))
+    assert.equal(r.params.machines, good.machines)
+    assert.equal(JSON.parse(column.seen[0].messages[1].content).exact_counts, true)
+
+    let creq = {recipe: "electronic-circuit", rate: 3, upstream: "copper-cable"}
+    let machines = {upstream: "assembling-machine-1", downstream: "assembling-machine-1"}
+    let cgood = defaultChainParams(creq, machines, data, {exact: true})
+    let padded = {...cgood, upstream: {...cgood.upstream, machines: cgood.upstream.machines + 2}}
+    let chain = lineFetch([chainReply(padded)])
+    let c = await askForChainLayout({provider: "ollama", model: "m", requirement: creq, machines, data, fetchFn: chain.fetchFn, exact: true})
+    assert.ok(c.ok, (c.errors || []).join("; "))
+    assert.equal(c.params.upstream.machines, cgood.upstream.machines)
+    assert.equal(JSON.parse(chain.seen[0].messages[1].content).exact_counts, true)
 })
 
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)
