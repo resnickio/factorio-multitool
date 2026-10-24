@@ -1,6 +1,6 @@
 // Builds a blueprint sample in a real (headless) Factorio server and reports
 // how it behaves: what each inserter picks up from and drops onto, whether
-// everything has power, and how much the column actually produces.
+// everything has power, and how much the layout actually produces.
 //
 //   node tools/game-test.mjs [--sample iron-4-furnaces] [--port 34299]
 //        [--game-dir D:/SteamLibrary/steamapps/common/Factorio]
@@ -9,19 +9,22 @@
 //
 // With --model, the layout is chosen by that local Ollama model (as in the
 // Blueprint tab) instead of by the built-in defaults, and the blueprint made
-// from its answer is what gets built.
+// from its answer is what gets built. (Single columns only.)
 //
-// The server runs from its own data directory, so it does not touch your
-// saves or configuration, and can run beside the game. It keeps running after
-// the report, so you can join it (Multiplayer, Connect to address,
-// localhost:<port>) and look. Stop it with the printed taskkill command.
+// The layout says where it meets the rest of the factory (connection points):
+// the test feeds the input belts, empties the output belt, and puts an
+// infinite supply on each fluid pipe. The server runs from its own data
+// directory, so it does not touch your saves or configuration, and can run
+// beside the game. It keeps running after the report, so you can join it
+// (Multiplayer, Connect to address, localhost:<port>) and look. Stop it with
+// the printed taskkill command.
 
 import fs from "node:fs"
 import path from "node:path"
 import { spawn } from "node:child_process"
 import zlib from "node:zlib"
 import { fileURLToPath } from "node:url"
-import { defaultParams } from "../blueprint/dsl.js"
+import { defaultParams, buildColumnBlueprint } from "../blueprint/dsl.js"
 import { askForLayout } from "../blueprint/llm.js"
 import { encodeBlueprint } from "../blueprint/codec.js"
 import { SAMPLES, DEFAULT_MACHINE } from "./samples.mjs"
@@ -44,36 +47,82 @@ if (!sample) {
     throw new Error("unknown sample " + SAMPLE)
 }
 const data = JSON.parse(fs.readFileSync(path.join(here, "../data/space-age-2.1.23.json"), "utf8"))
-const machine = sample.machine || DEFAULT_MACHINE
-const recipe = data.recipes.find(r => r.key === sample.recipe)
-const solids = new Set(data.items.filter(i => i.type !== "fluid").map(i => i.key))
-const inputs = recipe.ingredients.map(i => i.name).filter(n => solids.has(n))
-const fluids = recipe.ingredients.map(i => i.name).filter(n => !solids.has(n))
-const outputItem = recipe.results[0].name
-let params, blueprint
-if (args.model) {
-    let requirement = {recipe: sample.recipe, rate: sample.rate}
-    let result = await askForLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machine, data})
-    console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
+const deflate = bytes => new Uint8Array(zlib.deflateSync(bytes, {level: 9}))
+
+// Works out the layout to build: its entities, connection points, the recipes
+// to unlock, and the product to measure.
+let layout
+if (sample.chain) {
+    const { defaultChainParams, buildChainBlueprint } = await import("../blueprint/chain.js")
+    let requirement = {recipe: sample.chain.downstream, rate: sample.rate, upstream: sample.chain.upstream}
+    let machines = {upstream: sample.chain.upstreamMachine, downstream: sample.chain.downstreamMachine}
+    let params = defaultChainParams(requirement, machines, data)
+    let result = buildChainBlueprint(params, requirement, data)
     if (!result.ok) {
-        console.log(result.errors.join("\n"))
+        console.log("chain rejected:\n" + result.errors.join("\n"))
         process.exit(1)
     }
-    params = result.params
-    console.log("model's layout:", JSON.stringify({...params, notes: undefined}))
-    if (params.notes) {
-        console.log("model's notes:", params.notes)
+    console.log("chain layout:", JSON.stringify(params))
+    layout = {
+        entities: result.entities,
+        connections: result.connections,
+        blueprint: encodeBlueprint(result.blueprint, deflate),
+        recipes: [sample.chain.upstream, sample.chain.downstream],
+        product: data.recipes.find(r => r.key === sample.chain.downstream).results[0].name,
+        target: sample.rate,
     }
-    let deflate = bytes => new Uint8Array(zlib.deflateSync(bytes, {level: 9}))
-    blueprint = encodeBlueprint(result.blueprint, deflate)
-    fs.mkdirSync(path.join(here, "samples", "model"), {recursive: true})
-    fs.writeFileSync(path.join(here, "samples", "model", SAMPLE + ".txt"), blueprint + "\n")
 } else {
-    params = {...defaultParams({recipe: sample.recipe, rate: sample.rate}, machine, data), ...sample.override}
-    blueprint = fs.readFileSync(path.join(here, "samples", SAMPLE + ".txt"), "utf8").trim()
+    const machine = sample.machine || DEFAULT_MACHINE
+    let requirement = {recipe: sample.recipe, rate: sample.rate}
+    let params, result
+    if (args.model) {
+        result = await askForLayout({provider: "ollama", model: args.model, maxAttempts: 6, requirement, machine, data})
+        console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
+        if (!result.ok) {
+            console.log(result.errors.join("\n"))
+            process.exit(1)
+        }
+        params = result.params
+        console.log("model's layout:", JSON.stringify({...params, notes: undefined}))
+        if (params.notes) {
+            console.log("model's notes:", params.notes)
+        }
+    } else {
+        params = {...defaultParams(requirement, machine, data), ...sample.override}
+        result = buildColumnBlueprint(params, requirement, data)
+        if (!result.ok) {
+            console.log("layout rejected:\n" + result.errors.join("\n"))
+            process.exit(1)
+        }
+    }
+    let blueprint = encodeBlueprint(result.blueprint, deflate)
+    if (args.model) {
+        fs.mkdirSync(path.join(here, "samples", "model"), {recursive: true})
+        fs.writeFileSync(path.join(here, "samples", "model", SAMPLE + ".txt"), blueprint + "\n")
+    }
+    layout = {
+        entities: result.entities,
+        connections: result.connections,
+        blueprint,
+        recipes: [sample.recipe],
+        product: data.recipes.find(r => r.key === sample.recipe).results[0].name,
+        target: sample.rate,
+    }
 }
-// Tiles of room below the column, for the test area.
-const ROWS = Math.ceil(params.machines / params.columns) * data.blueprint_entities[params.machine].width
+
+// Layout coordinates are tiles from the layout's own origin; the game places
+// the blueprint somewhere else, so the test translates by the difference
+// between the two bounding boxes.
+const minX = Math.min(...layout.entities.map(e => e.x))
+const minY = Math.min(...layout.entities.map(e => e.y))
+const maxX = Math.max(...layout.entities.map(e => e.x + e.w))
+const maxY = Math.max(...layout.entities.map(e => e.y + e.h))
+const lua_list = (items, fn) => "{" + items.map(fn).join(", ") + "}"
+const feeds = lua_list(layout.connections.inputs, f => `{x = ${f.x}, y = ${f.y}, items = ${lua_list(f.items, i => '"' + i + '"')}}`)
+const sinks = lua_list([layout.connections.output], s => `{x = ${s.x}, y = ${s.y}, item = "${s.item}"}`)
+const fluidSupplies = lua_list(layout.connections.fluids, f => `{x = ${f.x}, y = ${f.y}, fluid = "${f.fluid}"}`)
+// Extra feeds some layouts have (belts supplied from outside).
+const extraFeeds = lua_list(layout.connections.extraInputs || [], f => `{x = ${f.x}, y = ${f.y}, items = ${lua_list(f.items, i => '"' + i + '"')}}`)
 
 // Lay out the data directory.
 fs.rmSync(WORK, {recursive: true, force: true})
@@ -100,15 +149,19 @@ fs.writeFileSync(path.join(WORK, "map-gen-settings.json"), JSON.stringify({
     autoplace_controls: {}, cliff_settings: {name: "cliff", cliff_elevation_0: 1024, cliff_elevation_interval: 40, richness: 0},
 }))
 
+const AREA_X1 = -20 - 20
+const AREA_X2 = 60 + (maxX - minX)
+const AREA_Y2 = 60 + (maxY - minY)
 const lua = `
-local BLUEPRINT = "${blueprint}"
--- Each ingredient rides its own lane of the input belt; a single one uses both.
-local INPUTS = {${inputs.map(i => '"' + i + '"').join(", ")}}
-local OUTPUT_ITEM = "${outputItem}"
-local HAS_SOLIDS = ${inputs.length > 0}
-local FLUIDS = {${fluids.map(i => '"' + i + '"').join(", ")}}
-local COLUMNS = ${params.columns}
-local FURNACE_SIZE = ${data.blueprint_entities[params.machine].width}
+local BLUEPRINT = "${layout.blueprint}"
+local RECIPES = ${lua_list(layout.recipes, r => '"' + r + '"')}
+local FEEDS = ${feeds}
+local EXTRA_FEEDS = ${extraFeeds}
+local SINKS = ${sinks}
+local FLUID_SUPPLIES = ${fluidSupplies}
+local PRODUCT = "${layout.product}"
+local TARGET = ${layout.target}
+local JS_MIN_X, JS_MIN_Y = ${minX}, ${minY}
 local SECONDS = ${SECONDS}
 local WARMUP = ${WARMUP} * 60
 local report = {}
@@ -126,19 +179,29 @@ local function status_name(status)
   return tostring(status)
 end
 
+local BELTS = {"transport-belt", "fast-transport-belt", "express-transport-belt", "turbo-transport-belt"}
+local function belt_at(surface, x, y)
+  for _, name in pairs(BELTS) do
+    local belt = surface.find_entity(name, {x, y})
+    if belt then return belt end
+  end
+end
+
 local function setup()
-  -- Furnaces only take ingredients for recipes the force has unlocked.
-  game.forces.player.recipes["${sample.recipe}"].enabled = true
+  -- Machines only take ingredients for recipes the force has unlocked.
+  for _, recipe in pairs(RECIPES) do
+    game.forces.player.recipes[recipe].enabled = true
+  end
   local surface = game.surfaces[1]
-  surface.request_to_generate_chunks({15, 40}, 4)
+  surface.request_to_generate_chunks({15, 40}, 5)
   surface.force_generate_chunk_requests()
-  local area = {{-10, -20}, {60, ${ROWS + 60}}}
+  local area = {{${AREA_X1}, -40}, {${AREA_X2}, ${AREA_Y2}}}
   for _, e in pairs(surface.find_entities(area)) do
     if e.type ~= "character" then e.destroy() end
   end
   local tiles = {}
-  for x = -10, 60 do
-    for y = -20, ${ROWS + 60} do
+  for x = ${AREA_X1}, ${AREA_X2} do
+    for y = -40, ${AREA_Y2} do
       tiles[#tiles + 1] = {name = "concrete", position = {x, y}}
     end
   end
@@ -146,44 +209,35 @@ local function setup()
 
   local inv = game.create_inventory(1)
   local stack = inv[1]
-  local result = stack.import_stack(BLUEPRINT)
-  say("import_stack result: " .. tostring(result))
-  local entities = stack.get_blueprint_entities()
-  say("blueprint entities: " .. tostring(entities and #entities))
+  say("import_stack result: " .. tostring(stack.import_stack(BLUEPRINT)))
+  say("blueprint entities: " .. tostring(#stack.get_blueprint_entities()))
   stack.build_blueprint{surface = surface, force = game.forces.player, position = {x = 20, y = 30}, build_mode = defines.build_mode.forced}
   for pass = 1, 5 do
     for _, ghost in pairs(surface.find_entities_filtered{type = "entity-ghost", area = area}) do
       ghost.revive{}
     end
   end
-  local left = #surface.find_entities_filtered{type = "entity-ghost", area = area}
-  say("ghosts left after reviving: " .. left)
+  say("ghosts left after reviving: " .. #surface.find_entities_filtered{type = "entity-ghost", area = area})
   state.surface = surface
   state.area = area
 
-  local belts = surface.find_entities_filtered{type = "transport-belt", area = area}
-  local minx, maxx, miny, maxy = 1e9, -1e9, 1e9, -1e9
-  for _, b in pairs(belts) do
-    minx = math.min(minx, b.position.x); maxx = math.max(maxx, b.position.x)
-    miny = math.min(miny, b.position.y); maxy = math.max(maxy, b.position.y)
+  -- Where the layout's own origin ended up: the top-left of its bounding box.
+  local min_x, min_y = 1e9, 1e9
+  for _, e in pairs(surface.find_entities_filtered{area = area}) do
+    local w = e.prototype.tile_width or 1
+    local h = e.prototype.tile_height or 1
+    if e.type ~= "character" then
+      min_x = math.min(min_x, math.floor(e.position.x - w / 2 + 0.01))
+      min_y = math.min(min_y, math.floor(e.position.y - h / 2 + 0.01))
+    end
   end
-  say(string.format("belts: %d, x %.1f..%.1f, y %.1f..%.1f", #belts, minx, maxx, miny, maxy))
-  if not HAS_SOLIDS then
-    -- Only the output belt exists; the rest of the layout is placed around it.
-    local out_x = minx
-    minx = out_x - (3 + FURNACE_SIZE)
-    maxx = out_x + (3 + FURNACE_SIZE)
-  end
-  state.minx, state.maxx, state.miny, state.maxy = minx, maxx, miny, maxy
-  state.inputs = {minx}
-  if COLUMNS == 2 then state.inputs[2] = maxx end
-  state.output_x = minx + 3 + FURNACE_SIZE
-  local function belt_at(x, y)
-    return surface.find_entity("transport-belt", {x, y}) or surface.find_entity("fast-transport-belt", {x, y}) or surface.find_entity("express-transport-belt", {x, y}) or surface.find_entity("turbo-transport-belt", {x, y})
-  end
-  state.belt_at = belt_at
+  state.dx = min_x - JS_MIN_X
+  state.dy = min_y - JS_MIN_Y
+  say(string.format("layout origin in the game: (%d,%d)", min_x, min_y))
+  local function at(c) return {c.x + state.dx + 0.5, c.y + state.dy + 0.5} end
+  state.at = at
 
-  -- Power: an interface which makes plenty, inside the first pole's area.
+  -- Power: an interface which makes plenty, beside a pole.
   local poles = surface.find_entities_filtered{type = "electric-pole", area = area}
   say("poles: " .. #poles)
   local eei = nil
@@ -207,19 +261,15 @@ local function setup()
     say("could not place energy interface")
   end
 
-  -- Fluids: an infinite supply on top of each collector pipe. Fluid k uses the
-  -- pipe 2k+2 tiles beyond the belt; a second column has its own on the far side.
-  for k, fluid in ipairs(FLUIDS) do
-    local sides = {{state.minx - 2 - 2 * (k - 1)}}
-    if COLUMNS == 2 then sides[2] = {state.maxx + 2 + 2 * (k - 1)} end
-    for _, side in pairs(sides) do
-      local pipe = surface.create_entity{name = "infinity-pipe", position = {side[1], state.miny - 2}, force = game.forces.player}
-      if pipe then
-        pipe.set_infinity_pipe_filter{name = fluid, percentage = 1, mode = "at-least"}
-        say("supplying " .. fluid .. " at " .. serpent.line(pipe.position))
-      else
-        say("could not place a supply for " .. fluid)
-      end
+  -- Fluids: an infinite supply above the top of each collector pipe.
+  for _, f in pairs(FLUID_SUPPLIES) do
+    local p = at({x = f.x, y = f.y - 1})
+    local pipe = surface.create_entity{name = "infinity-pipe", position = p, force = game.forces.player}
+    if pipe then
+      pipe.set_infinity_pipe_filter{name = f.fluid, percentage = 1, mode = "at-least"}
+      say("supplying " .. f.fluid .. " at " .. serpent.line(pipe.position))
+    else
+      say("could not place a supply for " .. f.fluid)
     end
   end
 end
@@ -240,15 +290,14 @@ local function status_report(label)
   local surface, area = state.surface, state.area
   local counts = {}
   for _, e in pairs(surface.find_entities_filtered{type = {"furnace", "assembling-machine", "inserter"}, area = area}) do
-    local key = e.name .. " " .. status_name(e.status)
+    local recipe = nil
+    if e.type ~= "inserter" then recipe = e.get_recipe() end
+    local key = e.name .. (recipe and (" [" .. recipe.name .. "]") or "") .. " " .. status_name(e.status)
     counts[key] = (counts[key] or 0) + 1
   end
   for key, n in pairs(counts) do say(label .. " status " .. key .. " x" .. n) end
 end
 
-local produced = 0
-local started_tick = nil
-local fed = 0
 local function network_report()
   local surface, area = state.surface, state.area
   local ids = {}
@@ -259,34 +308,39 @@ local function network_report()
   for id, n in pairs(ids) do say("poles in electric network " .. tostring(id) .. ": " .. n) end
 end
 
+local produced = 0
+local fed = 0
 script.on_init(function()
   setup()
   network_report()
 end)
 
-script.on_event(defines.events.on_tick, function(event)
-  if not state.surface then return end
-  -- Feed the input belts, and empty the output belt.
-  for _, x in pairs(state.inputs) do
-    local belt = HAS_SOLIDS and state.belt_at(x, state.miny)
-    if belt then
-      for line = 1, 2 do
-        local l = belt.get_transport_line(line)
-        local item = INPUTS[line] or INPUTS[1]
-        for i = 1, 2 do
-          if l.can_insert_at_back() then
-            l.insert_at_back({name = item, count = 1})
-            fed = fed + 1
-          end
-        end
+local function feed(f)
+  local belt = belt_at(state.surface, table.unpack(state.at(f)))
+  if not belt then return end
+  for line = 1, 2 do
+    local l = belt.get_transport_line(line)
+    local item = f.items[line] or f.items[1]
+    for i = 1, 2 do
+      if l.can_insert_at_back() then
+        l.insert_at_back({name = item, count = 1})
+        fed = fed + 1
       end
     end
   end
-  local out = state.belt_at(state.output_x, state.maxy)
-  if out then
-    for line = 1, 2 do
-      local removed = out.get_transport_line(line).remove_item({name = OUTPUT_ITEM, count = 100})
-      if event.tick >= WARMUP then produced = produced + removed end
+end
+
+script.on_event(defines.events.on_tick, function(event)
+  if not state.surface then return end
+  for _, f in pairs(FEEDS) do feed(f) end
+  for _, f in pairs(EXTRA_FEEDS) do feed(f) end
+  for _, s in pairs(SINKS) do
+    local out = belt_at(state.surface, table.unpack(state.at(s)))
+    if out then
+      for line = 1, 2 do
+        local removed = out.get_transport_line(line).remove_item({name = s.item, count = 100})
+        if event.tick >= WARMUP then produced = produced + removed end
+      end
     end
   end
   if event.tick == 5 then status_report("tick 5") end
@@ -295,7 +349,7 @@ script.on_event(defines.events.on_tick, function(event)
     inserter_report()
   end
   if event.tick == WARMUP + SECONDS * 60 then
-    say(string.format("produced %d %s in %d s after warm-up = %.3f/s (target ${sample.rate}/s); fed %d items in total", produced, OUTPUT_ITEM, SECONDS, produced / SECONDS, fed))
+    say(string.format("produced %d %s in %d s after warm-up = %.3f/s (target %s/s); fed %d items in total", produced, PRODUCT, SECONDS, produced / SECONDS, tostring(TARGET), fed))
     status_report("end")
     helpers.write_file("bp-result.txt", table.concat(report, "\\n") .. "\\n", false)
   end

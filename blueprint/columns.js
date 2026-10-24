@@ -29,6 +29,14 @@ import {
 } from "./entities.js"
 import { validateLayout } from "./validate.js"
 
+// Returns {entities, width, height, connections}. The connections say where
+// the layout meets the rest of the factory, as tiles in the same coordinates:
+//   inputs: [{x, y, items}]  the first tile of each input belt, and the solid
+//                            ingredients it should carry
+//   output: {x, y, item}     the last tile of the output belt
+//   fluids: [{x, y, fluid}]  the top tile of each collector pipe, which the
+//                            fluid is connected above
+//
 // Params:
 //   machine, machines, recipe, columns (1 or 2), inputBelt, outputBelt,
 //   inputInserter, outputInserter, inputInserters, outputInserters (per
@@ -90,6 +98,7 @@ function place(params, data, poleStep) {
         }
     }
 
+    let fluidSupplies = []
     let machineExtra = machine.type === "assembling-machine" ? {recipe: params.recipe} : {}
     for (let c = 0; c < columns; c++) {
         let left = c === 0
@@ -123,6 +132,7 @@ function place(params, data, poleStep) {
         ports.forEach((port, k) => {
             let [dx] = STEP[port.facing]
             let collectorX = x[left ? "machine1" : "machine2"] + port.outX + dx * (3 + 2 * k)
+            fluidSupplies.push({x: collectorX, y: -1, fluid: fluids[k].name})
             for (let y = -1; y < counts[c] * size; y++) {
                 add(params.pipe, collectorX, y, NORTH)
             }
@@ -148,5 +158,18 @@ function place(params, data, poleStep) {
             add(params.pole, tx, i * size + row, NORTH)
         }
     }
-    return {entities, width: columns === 1 ? 4 + size : 7 + 2 * size, height: rows}
+    let solidNames = recipe.ingredients.filter(i => !fluids.includes(i)).map(i => i.name)
+    let inputs = []
+    if (hasSolids) {
+        inputs.push({x: x.belt1, y: 0, items: solidNames})
+        if (columns === 2) {
+            inputs.push({x: x.belt2, y: 0, items: solidNames})
+        }
+    }
+    return {
+        entities,
+        width: columns === 1 ? 4 + size : 7 + 2 * size,
+        height: rows,
+        connections: {inputs, output: {x: x.outBelt, y: rows - 1, item: recipe.results[0].name}, fluids: fluidSupplies},
+    }
 }

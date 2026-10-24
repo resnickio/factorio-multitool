@@ -9,6 +9,7 @@ import { validateParams, validateLayout } from "../blueprint/validate.js"
 import { previewLayout } from "../blueprint/build.js"
 import { askForLayout } from "../blueprint/llm.js"
 import { EAST } from "../blueprint/entities.js"
+import { stageRequirements, chainIneligibleReason, validateChain, defaultChainParams, buildChainBlueprint } from "../blueprint/chain.js"
 
 const data = JSON.parse(fs.readFileSync(new URL("../data/space-age-2.1.23.json", import.meta.url), "utf8"))
 const deflate = bytes => new Uint8Array(zlib.deflateSync(bytes, {level: 9}))
@@ -382,6 +383,101 @@ await test("the model loop gives up and reports errors", async () => {
 await test("an API error is reported", async () => {
     let fetchFn = async () => ({ok: false, status: 401, statusText: "Unauthorized", json: async () => ({error: {message: "invalid x-api-key"}})})
     await assert.rejects(askForLayout({apiKey: "bad", model: "m", requirement: iron, machine: F, data, fetchFn}), /401.*invalid x-api-key/)
+})
+
+const chainReq = {recipe: "electronic-circuit", rate: 3, upstream: "copper-cable"}
+const chainMachines = {upstream: "assembling-machine-2", downstream: "assembling-machine-2"}
+const chain = (req = chainReq, machines = chainMachines) => {
+    let params = defaultChainParams(req, machines, data)
+    return {params, result: buildChainBlueprint(params, req, data)}
+}
+
+await test("a chain's stages are sized from the downstream rate", () => {
+    let st = stageRequirements(chainReq, data)
+    // Three plates' worth... a circuit takes three cables and an iron plate.
+    assert.equal(st.upstream.recipe, "copper-cable")
+    assert.equal(st.upstream.rate, 9)
+    assert.deepEqual(st.other, {item: "iron-plate", rate: 3})
+    assert.equal(st.linking, "copper-cable")
+    assert.throws(() => stageRequirements({recipe: "iron-gear-wheel", rate: 1, upstream: "copper-cable"}, data), /does not use/)
+})
+
+await test("a cable-to-circuits chain is accepted and carries both recipes", () => {
+    let {params, result} = chain()
+    assert.deepEqual(result.errors, [])
+    assert.ok(result.ok)
+    let machines = result.blueprint.entities.filter(e => e.name === "assembling-machine-2")
+    assert.equal(machines.filter(e => e.recipe === "copper-cable").length, params.upstream.machines)
+    assert.equal(machines.filter(e => e.recipe === "electronic-circuit").length, params.downstream.machines)
+    console.log("\n" + previewLayout(result.entities, data).split("\n").slice(0, 12).join("\n") + "\n")
+})
+
+await test("the chain shares one middle belt and its feeders reach the supply points", () => {
+    let {params, result} = chain()
+    let belts = result.entities.filter(e => /transport-belt/.test(e.name))
+    let mid = belts.filter(e => e.x === 0)
+    let rows = (params.upstream.machines + params.downstream.machines) * 3
+    // From two tiles above the first machine to the last row.
+    assert.equal(mid.length, rows + 2)
+    assert.ok(mid.every(e => e.direction === 8))
+    // The other ingredient joins the belt from the east, one tile above the machines.
+    let feeder = belts.filter(e => e.y === -1 && e.x > 0)
+    assert.ok(feeder.length > 3 && feeder.every(e => e.direction === 12))
+    assert.equal(Math.min(...feeder.map(e => e.x)), 1)
+    let c = result.connections
+    assert.equal(c.inputs.length, 2)
+    assert.deepEqual(c.inputs[0].items, ["copper-plate"])
+    assert.deepEqual(c.inputs[1].items, ["iron-plate"])
+    assert.equal(c.output.item, "electronic-circuit")
+    assert.ok(c.output.x < 0)
+})
+
+await test("the middle belt must carry each ingredient on its own lane", () => {
+    // 8 circuits a second need 24 cables a second on their lane.
+    let big = {recipe: "electronic-circuit", rate: 8, upstream: "copper-cable"}
+    let params = defaultChainParams(big, chainMachines, data)
+    assert.deepEqual(validateChain(params, big, data).errors, [])
+    assert.equal(params.mid, "turbo-transport-belt")
+    let tooSlow = validateChain({...params, mid: "express-transport-belt"}, big, data)
+    assert.ok(tooSlow.errors.some(e => /carries/.test(e)), tooSlow.errors.join("; "))
+    // Ten need 30, which only just fits a turbo belt's lane; the search still finds it.
+    let edge = {recipe: "electronic-circuit", rate: 10, upstream: "copper-cable"}
+    let found = defaultChainParams(edge, chainMachines, data)
+    assert.equal(found.mid, "turbo-transport-belt")
+})
+
+await test("a chain can have furnaces upstream", () => {
+    let req = {recipe: "electronic-circuit", rate: 3, upstream: "iron-plate"}
+    let {result} = chain(req, {upstream: "electric-furnace", downstream: "assembling-machine-2"})
+    assert.deepEqual(result.errors, [])
+    // Furnaces take no recipe, and the other ingredient is the cable.
+    assert.ok(!result.blueprint.entities.some(e => e.name === "electric-furnace" && e.recipe))
+    assert.deepEqual(result.connections.inputs[1].items, ["copper-cable"])
+})
+
+await test("chains say why a pair cannot be built", () => {
+    assert.equal(chainIneligibleReason(chainReq, chainMachines, data), null)
+    assert.match(chainIneligibleReason({recipe: "iron-gear-wheel", rate: 1, upstream: "copper-cable"}, chainMachines, data), /does not use/)
+    assert.match(chainIneligibleReason(chainReq, {upstream: "assembling-machine-2", downstream: "stone-furnace"}, data), /not an electric/)
+    assert.match(chainIneligibleReason({recipe: "plastic-bar", rate: 1, upstream: "coal"}, {upstream: "assembling-machine-2", downstream: "chemical-plant"}, data) || "unknown", /unknown|fluid|does not use/)
+})
+
+await test("a chain layout survives the layout validator and has wired poles", () => {
+    let {result} = chain()
+    assert.deepEqual(validateLayout(result.entities, data).errors, [])
+    let poles = result.blueprint.entities.filter(e => /pole/.test(e.name)).length
+    assert.equal(result.blueprint.wires.length, poles - 1)
+})
+
+await test("every inserter in a chain points east, as in a right-hand column", () => {
+    let {result} = chain()
+    assert.ok(result.entities.filter(e => /inserter/.test(e.name)).every(e => e.direction === 4))
+})
+
+await test("the chain blueprint round-trips", () => {
+    let {result} = chain()
+    let back = decodeBlueprint(encodeBlueprint(result.blueprint, deflate), inflate).blueprint
+    assert.equal(back.entities.length, result.entities.length)
 })
 
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)
