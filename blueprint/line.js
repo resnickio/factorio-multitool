@@ -234,7 +234,7 @@ function stageParams(params, side, j) {
     // branch of a line with a second belt, that is the second.
     let shared = side === "east" && params.mid2 ? params.mid2 : params.mid
     return {
-        pipe: "pipe", pipeToGround: "pipe-to-ground", pole: params.pole, columns: 1,
+        pipe: "pipe", pipeToGround: "pipe-to-ground", pole: params.pole, columns: 1, exact: params.exact,
         recipe: stage.recipe, machine: stage.machine, machines: stage.machines,
         inputBelt: j === last ? branch.supply : branch.belts[j],
         outputBelt: j === 0 ? shared : branch.belts[j - 1],
@@ -249,16 +249,20 @@ function rootErrors(params, spec, resolved, data) {
     let root = params.root
     let requirement = {recipe: root.recipe, rate: spec.root.rate}
     let base = {
-        pipe: "pipe", pipeToGround: "pipe-to-ground", pole: params.pole, columns: 1,
+        pipe: "pipe", pipeToGround: "pipe-to-ground", pole: params.pole, columns: 1, exact: params.exact,
         recipe: root.recipe, machine: root.machine, machines: root.machines,
         outputBelt: root.outputBelt, outputInserter: root.outputInserter, outputInserters: root.outputInserters,
     }
     let errors = []
     let stats = null
+    let fraction = 1
     let run = (sp, d) => {
         let checked = validateParams(sp, requirement, d)
         errors.push(...checked.errors)
         stats = stats || checked.stats
+        if (checked.stats.speedFraction !== undefined) {
+            fraction = Math.min(fraction, checked.stats.speedFraction)
+        }
     }
     if (resolved.m === 1) {
         run({...base, inputBelt: params.mid, inputInserter: root.inputInserter, inputInserters: root.inputInserters}, data)
@@ -273,7 +277,7 @@ function rootErrors(params, spec, resolved, data) {
         run({...base, inputBelt: params.mid2, inputInserter: root.farInserter, inputInserters: root.farInserters, longInput: true},
             withIngredients(data, root.recipe, resolved.rootBelts.far))
     }
-    return {errors: [...new Set(errors)], stats}
+    return {errors: [...new Set(errors)], stats, fraction}
 }
 
 // Params:
@@ -309,6 +313,8 @@ export function validateLine(params, spec, data) {
         errors.push(`final (${name(spec.root.recipe)}): ${e}`)
     }
     stats.root = root.stats
+    // The share of its full speed each part can run at, with its inserters.
+    let fractions = [[name(spec.root.recipe), root.fraction]]
     if (resolved.m === 2 && !params.mid2) {
         errors.push("the final recipe needs a second shared belt")
     }
@@ -322,12 +328,22 @@ export function validateLine(params, spec, data) {
             for (let e of checked.errors) {
                 errors.push(`${side} stage ${j + 1} (${name(stage.recipe)}): ${e}`)
             }
-            warnings.push(...checked.warnings)
+            warnings.push(...checked.warnings.map(w => `${side} stage ${j + 1} (${name(stage.recipe)}): ${w}`))
+            fractions.push([name(stage.recipe), checked.stats.speedFraction === undefined ? 1 : checked.stats.speedFraction])
             stats[side].push(checked.stats)
             if (stage.other) {
                 feeder(`${side} stage ${j + 1} (${stage.other.item})`, params[side].stages[j].feeder, stage.other)
             }
         })
+    }
+    // With exact counts, a part whose inserters cannot keep its machines busy
+    // lowers the rate of the whole line.
+    if (params.exact && errors.length === 0) {
+        let [part, fraction] = fractions.reduce((a, b) => (b[1] < a[1] ? b : a))
+        stats.estimatedRate = spec.root.rate * fraction
+        if (fraction < 1 - 1e-9) {
+            warnings.unshift(`Exact machine counts: the inserters at ${part} keep its machines at about ${Math.round(fraction * 100)}% of full speed, so the line makes about ${stats.estimatedRate.toFixed(2)}/s of the ${spec.root.rate.toFixed(2)}/s asked for (an estimate from conservative inserter speeds, so likely a little more).`)
+        }
     }
     return {errors, warnings, stats}
 }
@@ -576,7 +592,7 @@ export function placeLine(params, spec, data) {
 
 // The final recipe's machines and inserters, for given shared belt tiers, or
 // null. Returns the first valid combination, cheapest first.
-function searchRoot(spec, resolved, data, mid, mid2, factor) {
+function searchRoot(spec, resolved, data, mid, mid2, factor, exact = false) {
     let belts = availableBelts(data)
     let root = lookupRecipe(data, spec.root.recipe)
     let info = entityInfo(data, spec.root.machine)
@@ -590,8 +606,11 @@ function searchRoot(spec, resolved, data, mid, mid2, factor) {
         }
     }
     outChoices.sort((a, b) => a.cost - b.cost)
-    let params = {pole: "medium-electric-pole", mid, mid2}
-    for (let machines = fewest; machines <= fewest * 3 + 4; machines++) {
+    let params = {pole: "medium-electric-pole", mid, mid2, exact}
+    // With exact counts the machines are the calculator's, and the inserters
+    // are those which keep them busiest, then the cheapest.
+    let best = null
+    for (let machines = fewest; machines <= (exact ? fewest : fewest * 3 + 4); machines++) {
         for (let near = 1; near <= 2; near++) {
             for (let far = 0; far <= (resolved.m === 2 ? 2 : 0); far++) {
                 if ((resolved.m === 2) !== (far > 0)) {
@@ -606,9 +625,14 @@ function searchRoot(spec, resolved, data, mid, mid2, factor) {
                                 farInserter: LONG_INSERTER, farInserters: far,
                                 outputInserter: out.name, outputInserters: out.count,
                             }
-                            let errors = rootErrors({...params, root: candidate}, {...spec, root: {...spec.root, rate}}, resolved, data).errors
-                            if (errors.length === 0) {
-                                return candidate
+                            let checked = rootErrors({...params, root: candidate}, {...spec, root: {...spec.root, rate}}, resolved, data)
+                            if (checked.errors.length === 0) {
+                                if (!exact) {
+                                    return candidate
+                                }
+                                if (best === null || checked.fraction > best.fraction + 1e-9) {
+                                    best = {candidate, fraction: checked.fraction}
+                                }
                             }
                         }
                     }
@@ -616,12 +640,17 @@ function searchRoot(spec, resolved, data, mid, mid2, factor) {
             }
         }
     }
-    return null
+    return best ? best.candidate : null
 }
 
 // Picks the cheapest valid parameters, from the slowest shared belts up. Each
 // stage is sized for a little more than needed where the belts allow.
-export function defaultLineParams(spec, data) {
+//
+// With options.exact, every part has the calculator's own machine count, and
+// the inserters which keep those busiest; the line then makes less than asked
+// where inserters limit it (validateLine says how much).
+export function defaultLineParams(spec, data, options = {}) {
+    let exact = Boolean(options.exact)
     let resolved = resolveLine(spec, data)
     let belts = availableBelts(data)
     let scaled = (req, factor) => ({recipe: req.recipe, rate: req.rate * factor})
@@ -639,7 +668,7 @@ export function defaultLineParams(spec, data) {
             return {stages: [], belts: [], supply: belts[0]}
         }
         let feederOf = stage => stage.other ? cheapestBelt(data, stage.other.rate) : null
-        let find = (stage, fixed) => defaultParams(scaled(stage, factor), stage.machine, data, {columns: 1, ...fixed})
+        let find = (stage, fixed) => defaultParams(scaled(stage, factor), stage.machine, data, {columns: 1, exact, ...fixed})
         if (stages.length === 1) {
             let p = find(stages[0], {outputBelt: shared})
             return {stages: [stageOf(p, feederOf(stages[0]))], belts: [], supply: p.inputBelt}
@@ -662,15 +691,15 @@ export function defaultLineParams(spec, data) {
         feeders[ext.from] = cheapestBelt(data, ext.rate)
     }
     let last = null
-    for (let factor of [HEADROOM, 1]) {
+    for (let factor of exact ? [1] : [HEADROOM, 1]) {
         for (let mid of belts) {
             for (let mid2 of resolved.m === 2 ? belts : [null]) {
-                let root = searchRoot(spec, resolved, data, mid, mid2, factor)
+                let root = searchRoot(spec, resolved, data, mid, mid2, factor, exact)
                 if (!root) {
                     continue
                 }
                 last = {
-                    pole: "medium-electric-pole", mid, mid2, root, feeders,
+                    pole: "medium-electric-pole", mid, mid2, root, feeders, exact,
                     east: branchFor("east", mid2 || mid, factor),
                     west: branchFor("west", mid, factor),
                 }

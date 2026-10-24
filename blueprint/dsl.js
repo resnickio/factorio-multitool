@@ -106,6 +106,9 @@ export function defaultParams(requirement, machine, data, fixed = {}) {
     }
     inserterChoices.sort((a, b) => a.cost - b.cost)
     let base = {machine, recipe: requirement.recipe, pole: "medium-electric-pole", pipe: "pipe", pipeToGround: "pipe-to-ground"}
+    if (fixed.exact) {
+        return exactParams(requirement, base, fewest, inserterChoices, belts, data, fixed)
+    }
     for (let machines = fewest; machines <= fewest * 3 + 4; machines++) {
         for (let columns of fixed.columns ? [fixed.columns] : [1, 2]) {
             for (let input of inserterChoices) {
@@ -128,6 +131,48 @@ export function defaultParams(requirement, machine, data, fixed = {}) {
     }
     return {
         ...base, machines: fewest, columns: 2,
+        inputBelt: belts[belts.length - 1], outputBelt: belts[belts.length - 1],
+        inputInserter: allowedInserters(data).at(-1), inputInserters: 2,
+        outputInserter: allowedInserters(data).at(-1), outputInserters: 2,
+    }
+}
+
+// The calculator's own machine count, with the inserters which keep the machines
+// busiest (then the cheapest) and the first belts which carry the load.
+function exactParams(requirement, base, machines, inserterChoices, belts, data, fixed) {
+    let best = null
+    for (let columns of fixed.columns ? [fixed.columns] : [1, 2]) {
+        for (let inputBelt of fixed.inputBelt ? [fixed.inputBelt] : belts) {
+            for (let outputBelt of fixed.outputBelt ? [fixed.outputBelt] : belts) {
+                for (let input of inserterChoices) {
+                    for (let output of inserterChoices) {
+                        let params = {
+                            ...base, machines, columns, inputBelt, outputBelt, exact: true,
+                            inputInserter: input.name, inputInserters: input.count,
+                            outputInserter: output.name, outputInserters: output.count,
+                        }
+                        let checked = validateParams(params, requirement, data)
+                        if (checked.errors.length > 0) {
+                            continue
+                        }
+                        let cost = input.cost + output.cost
+                        let beltCost = belts.indexOf(inputBelt) + belts.indexOf(outputBelt)
+                        let better = best === null
+                            || checked.stats.speedFraction > best.fraction + 1e-9
+                            || (Math.abs(checked.stats.speedFraction - best.fraction) <= 1e-9 && (beltCost < best.beltCost || (beltCost === best.beltCost && cost < best.cost)))
+                        if (better) {
+                            best = {params, fraction: checked.stats.speedFraction, cost, beltCost}
+                        }
+                    }
+                }
+            }
+        }
+        if (best) {
+            return best.params
+        }
+    }
+    return {
+        ...base, machines, columns: 2, exact: true,
         inputBelt: belts[belts.length - 1], outputBelt: belts[belts.length - 1],
         inputInserter: allowedInserters(data).at(-1), inputInserters: 2,
         outputInserter: allowedInserters(data).at(-1), outputInserters: 2,

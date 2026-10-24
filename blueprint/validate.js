@@ -184,11 +184,16 @@ export function validateParams(params, requirement, data) {
     // less. Say how many it would take with these inserters.
     let machinesFor = (capacity, fullFlow) => Math.ceil(requirement.rate * fullFlow / (capacity * outPerMachine) - 1e-9)
     let inFull = solidIngredients.reduce((sum, i) => sum + i.amount * crafts, 0)
+    // How much of its full speed a machine can run at, with these inserters.
+    stats.speedFraction = Math.min(1, inIns / inPerMachine, outIns / outFlow)
+    // With exact counts (params.exact) the machines are the calculator's own,
+    // and slow inserters only lower the rate, which is reported, not refused.
+    let speed = params.exact ? warnings : errors
     if (inIns < inPerMachine) {
-        errors.push(`${params.inputInserters} ${params.inputInserter}(s) move about ${inIns.toFixed(2)}/s from a belt, but a machine takes in ${inPerMachine.toFixed(2)}/s; with these inserters at least ${machinesFor(inIns, inFull)} machines would each be busy few enough for them (or use ${params.inputInserters === 1 ? "two inserters, or " : ""}faster inserters)`)
+        speed.push(`${params.inputInserters} ${params.inputInserter}(s) move about ${inIns.toFixed(2)}/s from a belt, but a machine takes in ${inPerMachine.toFixed(2)}/s; with these inserters at least ${machinesFor(inIns, inFull)} machines would each be busy few enough for them (or use ${params.inputInserters === 1 ? "two inserters, or " : ""}faster inserters)`)
     }
     if (outIns < outFlow) {
-        errors.push(`${params.outputInserters} ${params.outputInserter}(s) move about ${outIns.toFixed(2)}/s, but a machine puts out ${outFlow.toFixed(2)}/s; with these inserters at least ${machinesFor(outIns, outPerMachine)} machines would be enough (or use ${params.outputInserters === 1 ? "two inserters, or " : ""}faster inserters)`)
+        speed.push(`${params.outputInserters} ${params.outputInserter}(s) move about ${outIns.toFixed(2)}/s, but a machine puts out ${outFlow.toFixed(2)}/s; with these inserters at least ${machinesFor(outIns, outPerMachine)} machines would be enough (or use ${params.outputInserters === 1 ? "two inserters, or " : ""}faster inserters)`)
     }
     return {errors, warnings, stats}
 }

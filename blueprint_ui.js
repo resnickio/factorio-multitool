@@ -30,6 +30,9 @@ let busy = false
 // Stack inserters need a late technology: they are used only when asked for,
 // and by default when the research state limits the techs and includes it.
 let allowStack = null
+// Build lines with the calculator's own machine counts, even if the inserters
+// then limit the rate (which the result says).
+let exactCounts = false
 
 function stackAllowed() {
     if (allowStack !== null) {
@@ -386,13 +389,13 @@ async function generateLine(line) {
             if (apiKey === "") {
                 throw new Error("Enter an API key, or choose another way to build.")
             }
-            let asked = await askForLineLayout({provider, apiKey, model: models.anthropic, spec: line.spec, data: bpData()})
+            let asked = await askForLineLayout({provider, apiKey, model: models.anthropic, spec: line.spec, data: bpData(), exact: exactCounts})
             output = {...asked, line: {spec: line.spec, params: asked.params}}
         } else if (provider === "ollama") {
-            let asked = await askForLineLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, spec: line.spec, data: bpData()})
+            let asked = await askForLineLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, spec: line.spec, data: bpData(), exact: exactCounts})
             output = {...asked, line: {spec: line.spec, params: asked.params}}
         } else {
-            let params = defaultLineParams(line.spec, bpData())
+            let params = defaultLineParams(line.spec, bpData(), {exact: exactCounts})
             output = {...buildLineBlueprint(params, line.spec, bpData()), line: {spec: line.spec, params}, attempts: 0, log: []}
         }
     } catch (e) {
@@ -856,6 +859,17 @@ export function renderBlueprint() {
             panel.append("h3")
                 .text(`Blueprint for ${line.root.recipe.name} and what feeds it`)
             renderProviderControls(panel)
+            let exactBox = panel.append("label")
+                .style("display", "block")
+            exactBox.append("input")
+                .attr("type", "checkbox")
+                .property("checked", exactCounts)
+                .on("change", function() {
+                    exactCounts = this.checked
+                    renderBlueprint()
+                })
+            exactBox.append("span")
+                .text(" Exact counts: use the calculator's number of machines, even if the inserters then limit the rate (the result says by how much)")
             panel.append("button")
                 .property("disabled", busy)
                 .text("Generate")

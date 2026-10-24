@@ -81,12 +81,13 @@ export async function listOllamaModels(baseUrl = OLLAMA_URL, fetchFn = fetch) {
 //   slots: the machine counts in the parameters, for trimming (see below)
 //   reference(): the cheapest layout the calculator itself finds, to compare
 //   a working layout with (its machine counts, and what it did to need so few)
-async function askUntilAccepted({call, task, parse, build, maxAttempts, slots = [], reference = null}) {
+async function askUntilAccepted({call, task, parse, build, maxAttempts, slots = [], reference = null, rateOf = null}) {
     let messages = [{role: "user", content: JSON.stringify(task)}]
     let log = []
     let last = null
     let fallback = null
     let ref = null
+    let refRate = null
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
         let text = await call(messages)
         log.push({attempt, reply: text})
@@ -108,14 +109,24 @@ async function askUntilAccepted({call, task, parse, build, maxAttempts, slots = 
             // is sent back, with how the calculator gets by with fewer.
             ref = ref || (reference ? reference() : null)
             let more = ref ? slots.filter(s => s.get(last.params) > s.get(ref)) : []
-            if (more.length === 0 || attempt === maxAttempts) {
+            let reasons = more.map(s => `${s.label}: ${s.get(last.params)} machines, but ${s.get(ref)} are enough with ${s.hint(ref)}`)
+            // With exact counts the rate matters instead: a layout whose inserters
+            // make clearly less than the calculator's own is sent back too.
+            if (rateOf && ref) {
+                refRate = refRate === null ? rateOf(build(ref)) : refRate
+                let rate = rateOf(last)
+                if (rate < refRate * 0.98) {
+                    reasons.push(`the line makes about ${rate.toFixed(2)}/s, but ${refRate.toFixed(2)}/s with these inserters: ${slots.map(s => `${s.label}: ${s.hint(ref)}`).join("; ")}`)
+                }
+            }
+            if (reasons.length === 0 || attempt === maxAttempts) {
                 break
             }
             fallback = last
-            log[log.length - 1].errors = more.map(s => `${s.label}: ${s.get(last.params)} machines`)
+            log[log.length - 1].errors = reasons
             messages.push({role: "assistant", content: text})
-            let reasons = more.map(s => `${s.label}: ${s.get(last.params)} machines, but ${s.get(ref)} are enough with ${s.hint(ref)}`)
-            messages.push({role: "user", content: `That layout works, but it uses more machines than needed, and machines cost far more than inserters:\n- ${reasons.join("\n- ")}\nReply with a corrected JSON object with fewer machines.`})
+            let header = more.length > 0 ? "That layout works, but it uses more machines than needed, and machines cost far more than inserters:" : "That layout works, but the calculator's own does better:"
+            messages.push({role: "user", content: `${header}\n- ${reasons.join("\n- ")}\nReply with a corrected JSON object.`})
             continue
         }
         messages.push({role: "assistant", content: text})
@@ -210,12 +221,12 @@ export async function askForChainLayout({
 // buildLineBlueprint. The result's params are the line's.
 export async function askForLineLayout({
     provider = "anthropic", apiKey, baseUrl = OLLAMA_URL, think = false,
-    model, spec, data, maxAttempts = 3, fetchFn = fetch,
+    model, spec, data, maxAttempts = 3, fetchFn = fetch, exact = false,
 }) {
     return askUntilAccepted({
         call: caller({provider, apiKey, baseUrl, think, model, fetchFn, system: LINE_SYSTEM_PROMPT}),
-        task: describeLineTask(spec, data),
-        parse: text => parseLineReply(text, spec, data),
+        task: describeLineTask(spec, data, {exact}),
+        parse: text => parseLineReply(text, spec, data, {exact}),
         build: params => buildLineBlueprint(params, spec, data),
         slots: [
             {label: lookupRecipe(data, spec.root.recipe).localized_name.en, get: p => p.root.machines, set: (p, n) => { p.root.machines = n }, hint: p => inserterText(p.root)},
@@ -226,7 +237,8 @@ export async function askForLineLayout({
                 hint: p => inserterText(p[side].stages[j]),
             }))),
         ],
-        reference: () => defaultLineParams(spec, data),
+        reference: () => defaultLineParams(spec, data, {exact}),
+        rateOf: exact ? result => (result.stats && result.stats.estimatedRate !== undefined ? result.stats.estimatedRate : Infinity) : null,
         maxAttempts,
     })
 }

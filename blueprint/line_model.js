@@ -6,12 +6,12 @@ import {
     entityInfo, lookupRecipe, beltThroughput, machineCrafts, inserterThroughput,
     allowedInserters, ALLOWED_LONG_INSERTERS, ALLOWED_POLES,
 } from "./entities.js"
-import { resolveLine, availableBelts } from "./line.js"
+import { resolveLine, availableBelts, lineMinimums } from "./line.js"
 
 const SIDES = ["east", "west"]
 const LONG_INSERTER = ALLOWED_LONG_INSERTERS[0]
 
-export function describeLineTask(spec, data) {
+export function describeLineTask(spec, data, options = {}) {
     let resolved = resolveLine(spec, data)
     let machineInfo = (recipeKey, machine, rate) => {
         let recipe = lookupRecipe(data, recipeKey)
@@ -32,6 +32,7 @@ export function describeLineTask(spec, data) {
     let load = item => Number((crafts * rootRecipe.ingredients.find(i => i.name === item).amount).toFixed(4))
     let task = {
         task: "line",
+        exact_counts: Boolean(options.exact),
         final: machineInfo(spec.root.recipe, spec.root.machine, spec.root.rate),
         shared_belts: resolved.m === 1
             ? {second_belt: false, mid_items: rootRecipe.ingredients.map(i => ({item: i.name, per_second: load(i.name)}))}
@@ -80,11 +81,11 @@ export const LINE_SYSTEM_PROMPT = `You design a production line for Factorio. Yo
 - "final": an object with "machines" (integer, at least fewest_machines), "output_belt" (a belt), "input_inserter" and "output_inserter" (names from options.inserters), "input_inserter_count" (1 or 2 per machine, for the first shared belt), "output_inserter_count" (1 or 2) and, only when there is a second shared belt, "far_input_inserter_count" (1 or 2; long-handed inserters reaching the second belt over the first).
 - "east" and "west": for each branch that has stages, an object with "stages" (a list in the same order, each with "machines" (at least fewest_machines), "input_inserter", "output_inserter" (names from options.inserters), "input_inserter_count", "output_inserter_count" (1 or 2) and, for a stage with an extra_ingredient_from_feeder, "feeder_belt" (a belt)), "supply_belt" (the belt the outermost stage takes its ingredients from) and, for a branch of two stages, "belt_between" (the belt between them).
 - "notes": one short sentence on your choices.
-Machines only work as much as is needed, so extra machines each work less, which lowers the load on every inserter and belt; a machine costs far more than an inserter, so first fix a shortfall in inserter speed with a second inserter on that side or a fast-inserter, and add machines beyond the fewest only if that is still not enough. If you are told how many machines would be enough, use at least that many. A stage's flow is scaled by how busy its machines are: required_output_per_second / (machines x output_per_second_at_full_speed). An input inserter must move the sum of the machine's ingredient rates (scaled by how busy it is) taken from the belt; an output inserter must move the output rate; their rates are in options.inserters. Prefer the cheapest belts and inserters that are sufficient. Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why.`
+Machines only work as much as is needed, so extra machines each work less, which lowers the load on every inserter and belt; a machine costs far more than an inserter, so first fix a shortfall in inserter speed with a second inserter on that side or a fast-inserter, and add machines beyond the fewest only if that is still not enough. If you are told how many machines would be enough, use at least that many. A stage's flow is scaled by how busy its machines are: required_output_per_second / (machines x output_per_second_at_full_speed). An input inserter must move the sum of the machine's ingredient rates (scaled by how busy it is) taken from the belt; an output inserter must move the output rate; their rates are in options.inserters. Prefer the cheapest belts and inserters that are sufficient. Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why. If "exact_counts" is true, the aim is the fewest machines: use exactly fewest_machines for every part, and pick the fastest inserters you can (two per side where they fit), because the line may then run a little under its rate and that is accepted.`
 
 // Reads a model's reply into line parameters. The recipes and machines are
 // fixed by the task, so the model cannot change them.
-export function parseLineReply(text, spec, data) {
+export function parseLineReply(text, spec, data, options = {}) {
     let start = text.indexOf("{")
     let end = text.lastIndexOf("}")
     if (start === -1 || end === -1) {
@@ -104,7 +105,8 @@ export function parseLineReply(text, spec, data) {
         return {stages, belts: given.belt_between ? [given.belt_between] : [], supply: given.supply_belt}
     }
     let root = reply.final || {}
-    return {
+    let parsed = {
+        exact: Boolean(options.exact),
         pole: reply.pole,
         mid: reply.mid_belt,
         mid2: resolved.m === 2 ? reply.mid2_belt : null,
@@ -119,4 +121,15 @@ export function parseLineReply(text, spec, data) {
         east: branch("east"),
         west: branch("west"),
     }
+    // With exact counts the machines are the calculator's, whatever was asked.
+    if (options.exact) {
+        let minimums = lineMinimums(spec, data)
+        parsed.root.machines = minimums.root
+        for (let side of SIDES) {
+            parsed[side].stages.forEach((stage, j) => {
+                stage.machines = minimums[side][j]
+            })
+        }
+    }
+    return parsed
 }

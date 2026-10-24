@@ -64,12 +64,18 @@ if (sample.line) {
     let params, result
     if (args.model) {
         const { askForLineLayout } = await import("../blueprint/llm.js")
-        result = await askForLineLayout({provider: "ollama", model: args.model, maxAttempts: 6, spec, data})
+        result = await askForLineLayout({provider: "ollama", model: args.model, maxAttempts: 6, spec, data, exact: args.exact === "true"})
+        for (let w of result.warnings || []) {
+            console.log("warning:", w.slice(0, 200))
+        }
         console.log(`${args.model}: ${result.ok ? "accepted" : "REJECTED"} after ${result.attempts} attempt(s)`)
         params = result.params
     } else {
-        params = defaultLineParams(spec, data)
+        params = defaultLineParams(spec, data, {exact: args.exact === "true"})
         result = buildLineBlueprint(params, spec, data)
+        for (let w of result.warnings || []) {
+            console.log("warning:", w)
+        }
         if (args["force-root"]) {
             // Builds with fewer final machines than the validator accepts, to see
             // what the game really does (the validator's estimates are conservative).
