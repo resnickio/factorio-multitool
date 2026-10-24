@@ -91,8 +91,9 @@ export function parseReply(text) {
 // belts and inserters can serve, one column unless two are needed. Extra
 // machines run less busy, which eases the inserters, so when nothing works at
 // the fewest, more are tried. Returns the cheapest valid parameters found, or
-// the most capable ones if none are valid.
-export function defaultParams(requirement, machine, data) {
+// the most capable ones if none are valid. `fixed` pins some choices (columns,
+// inputBelt, outputBelt), for layouts which share belts.
+export function defaultParams(requirement, machine, data, fixed = {}) {
     let recipe = lookupRecipe(data, requirement.recipe)
     let outPer = recipe.results[0].amount * machineCrafts(entityInfo(data, machine), recipe)
     let fewest = Math.ceil(requirement.rate / outPer - 1e-9)
@@ -106,11 +107,11 @@ export function defaultParams(requirement, machine, data) {
     inserterChoices.sort((a, b) => a.cost - b.cost)
     let base = {machine, recipe: requirement.recipe, pole: "medium-electric-pole", pipe: "pipe", pipeToGround: "pipe-to-ground"}
     for (let machines = fewest; machines <= fewest * 3 + 4; machines++) {
-        for (let columns of [1, 2]) {
+        for (let columns of fixed.columns ? [fixed.columns] : [1, 2]) {
             for (let input of inserterChoices) {
                 for (let output of inserterChoices) {
-                    for (let inputBelt of belts) {
-                        for (let outputBelt of belts) {
+                    for (let inputBelt of fixed.inputBelt ? [fixed.inputBelt] : belts) {
+                        for (let outputBelt of fixed.outputBelt ? [fixed.outputBelt] : belts) {
                             let params = {
                                 ...base, machines, columns, inputBelt, outputBelt,
                                 inputInserter: input.name, inputInserters: input.count,
@@ -149,5 +150,5 @@ export function buildColumnBlueprint(params, requirement, data) {
     let recipe = lookupRecipe(data, requirement.recipe)
     let label = `${params.machines}x ${params.machine}: ${recipe.localized_name.en}`
     let blueprint = makeBlueprint(placed.entities, label, [params.machine, recipe.results[0].name], data)
-    return {ok: true, errors: [], warnings: checked.warnings, stats: checked.stats, entities: placed.entities, blueprint}
+    return {ok: true, errors: [], warnings: checked.warnings, stats: checked.stats, entities: placed.entities, connections: placed.connections, blueprint}
 }

@@ -15,4 +15,30 @@ export const SAMPLES = {
     "solid-fuel-chemical-plant": {recipe: "solid-fuel-from-petroleum-gas", rate: 2, machine: "chemical-plant"},
 }
 
+// Chains: an upstream recipe whose product the downstream recipe uses.
+SAMPLES["circuits-from-cable"] = {
+    rate: 3,
+    chain: {
+        upstream: "copper-cable", downstream: "electronic-circuit",
+        upstreamMachine: "assembling-machine-2", downstreamMachine: "assembling-machine-2",
+    },
+}
+
+SAMPLES["circuits-from-cable-asm1"] = {
+    rate: 3,
+    chain: {
+        upstream: "copper-cable", downstream: "electronic-circuit",
+        upstreamMachine: "assembling-machine-1", downstreamMachine: "assembling-machine-1",
+    },
+}
+// Furnaces upstream: the iron plate they make shares the belt with cable
+// arriving on the feeder.
+SAMPLES["circuits-from-iron-furnaces"] = {
+    rate: 3,
+    chain: {
+        upstream: "iron-plate", downstream: "electronic-circuit",
+        upstreamMachine: "electric-furnace", downstreamMachine: "assembling-machine-2",
+    },
+}
+
 export const DEFAULT_MACHINE = "electric-furnace"

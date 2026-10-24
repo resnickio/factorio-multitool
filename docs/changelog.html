@@ -8,6 +8,10 @@
 <body>
 <h1>Changelog</h1>
 
+<h2>2026-10-25</h2>
+
+The Blueprint tab can now build chains. When one row of the factory makes an ingredient of another (for example copper cable for electronic circuits, or iron plate for circuits), it offers a single blueprint with both: the two machine groups share one belt, each filling its own lane, with the other ingredient brought in by a feeder belt at the top. The blueprint tells you where to supply each ingredient and where the product comes out.
+
 <h2>2026-10-24</h2>
 
 There is a new, experimental Blueprint tab. For each electric furnace or assembling machine row in the current factory (with up to two solid ingredients, and, for chemical plants, one or two fluids brought in by pipe) it can build a column of machines (belts, inserters, furnaces and poles) and give you a blueprint string for the game, either from the cheapest parts which carry the load or with a model choosing them: a local Ollama model (nothing leaves your machine), or Claude using your own API key. Every layout is checked for belt and inserter capacity, overlaps and power before a string is produced.

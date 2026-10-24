@@ -4,13 +4,16 @@ import { defaultParams, buildColumnBlueprint, ineligibleReason } from "./bluepri
 import { previewLayout } from "./blueprint/build.js"
 import { askForLayout, OLLAMA_URL } from "./blueprint/llm.js"
 import { entityInfo, lookupRecipe, machineCrafts } from "./blueprint/entities.js"
+import { chainIneligibleReason, defaultChainParams, buildChainBlueprint } from "./blueprint/chain.js"
 
 // The Blueprint tab: turns the furnace and assembler rows in the current
-// solution into blueprint strings for the game.
+// solution into blueprint strings for the game, singly or as chains.
 
 const DEFAULT_MODELS = {anthropic: "claude-sonnet-5-5", ollama: "qwen3.8:latest"}
 
 let selected = null
+// A chain of two rows, by recipe key: {up, down}.
+let selectedChain = null
 // "none" (build with the cheapest parts which work), "anthropic" or "ollama".
 let provider = "none"
 // The key is kept only in this page, and never stored or put in the link.
@@ -52,6 +55,50 @@ function columnRequirements() {
         })
     }
     return result
+}
+
+// Pairs of rows where one makes an ingredient of the other, with whether a
+// chain of them can be built.
+function chainRequirements(reqs) {
+    let chains = []
+    for (let down of reqs) {
+        for (let up of reqs) {
+            if (up === down || !down.recipe.ingredients.some(i => i.item === up.recipe.products[0].item)) {
+                continue
+            }
+            let reason = chainIneligibleReason(
+                {recipe: down.recipe.key, rate: down.rate, upstream: up.recipe.key},
+                {upstream: up.building.key, downstream: down.building.key},
+                spec.data,
+            )
+            chains.push({up, down, reason})
+        }
+    }
+    return chains
+}
+
+function isSelectedChain(chain) {
+    return selectedChain !== null && selectedChain.up === chain.up.recipe.key && selectedChain.down === chain.down.recipe.key
+}
+
+async function generateChain(chain) {
+    busy = true
+    output = {pending: true}
+    renderBlueprint()
+    let requirement = {recipe: chain.down.recipe.key, rate: chain.down.rate, upstream: chain.up.recipe.key}
+    let machines = {upstream: chain.up.building.key, downstream: chain.down.building.key}
+    try {
+        let params = defaultChainParams(requirement, machines, spec.data)
+        output = {...buildChainBlueprint(params, requirement, spec.data), chain: params}
+    } catch (e) {
+        output = {failed: e.message}
+    }
+    if (output.ok) {
+        output.text = encodeBlueprint(output.blueprint, deflate)
+        output.preview = previewLayout(output.entities, spec.data)
+    }
+    busy = false
+    renderBlueprint()
 }
 
 // How many machines the solution calls for, without modules.
@@ -112,6 +159,10 @@ function renderResult(root) {
         box.append("div")
             .classed("blueprint-error", true)
             .text(output.failed)
+        return
+    }
+    if (output.chain) {
+        renderChainResult(box)
         return
     }
     if (output.params) {
@@ -189,6 +240,61 @@ function renderResult(root) {
     renderLog(box)
 }
 
+function renderChainResult(box) {
+    let p = output.chain
+    let part = (stage, name) => `${stage.machines} × ${stage.machine} (${name})`
+    let up = lookupRecipe(spec.data, p.upstreamRecipe)
+    let down = lookupRecipe(spec.data, p.downstreamRecipe)
+    box.append("div")
+        .text(`${part(p.upstream, up.localized_name.en)} feeding ${part(p.downstream, down.localized_name.en)} along a ${p.mid}.`)
+    if (!output.ok) {
+        box.append("div")
+            .classed("blueprint-error", true)
+            .text("This layout was rejected, so no blueprint was made:")
+        let list = box.append("ul")
+        for (let e of output.errors) {
+            list.append("li")
+                .text(e)
+        }
+        return
+    }
+    if (output.warnings.length > 0) {
+        let list = box.append("ul")
+        for (let w of output.warnings) {
+            list.append("li")
+                .text(w)
+        }
+    }
+    let [feedUp, feedOther] = output.connections.inputs
+    let supplies = `Bring ${feedUp.items.join(" and ")} to the end of the belt on the right (the lower of the two feeders)`
+    if (feedOther) {
+        supplies += `, and ${feedOther.items.join(" and ")} to the end of the feeder above it`
+    }
+    box.append("div")
+        .classed("hint", true)
+        .text(`${supplies}; both flow west into the layout. Take ${output.connections.output.item} from the bottom of the belt on the far left. Modules are not included.`)
+    box.append("pre")
+        .classed("blueprint-preview", true)
+        .text(output.preview)
+    box.append("div")
+        .classed("hint", true)
+        .text("Belts flow down (v) or west (<); ) and ( are inserters, A assemblers, P poles.")
+    box.append("textarea")
+        .classed("blueprint-text", true)
+        .attr("readonly", true)
+        .attr("rows", 4)
+        .property("value", output.text)
+        .on("focus", function() {
+            this.select()
+        })
+    box.append("button")
+        .text("Copy blueprint string")
+        .on("click", () => copyText(output.text))
+    box.append("span")
+        .classed("hint", true)
+        .text(" In the game, click the import-string button in the blueprint library and paste it.")
+}
+
 function renderLog(box) {
     if (!output.log || output.log.length === 0) {
         return
@@ -244,9 +350,62 @@ export function renderBlueprint() {
                 .text("Choose")
                 .on("click", () => {
                     selected = req.recipe
+                    selectedChain = null
                     output = null
                     renderBlueprint()
                 })
+        }
+    }
+
+    let chains = chainRequirements(reqs)
+    if (chains.length > 0) {
+        root.append("p")
+            .text("Chains: one row feeds another through a shared belt, so the ingredient never leaves the blueprint.")
+        let chainTable = root.append("table")
+            .classed("blueprint-list", true)
+        for (let chain of chains) {
+            let row = chainTable.append("tr")
+                .classed("selected", isSelectedChain(chain))
+            let icons = row.append("td")
+            icons.append(() => chain.up.recipe.icon.make(32))
+            icons.append("span")
+                .text(" → ")
+            icons.append(() => chain.down.recipe.icon.make(32))
+            row.append("td")
+                .text(`${chain.up.recipe.name} → ${chain.down.recipe.name}`)
+            row.append("td")
+                .classed("hint", !!chain.reason)
+                .text(chain.reason || `${chain.down.rate.toFixed(2)}/s of ${chain.down.recipe.products[0].item.name}`)
+            let cell = row.append("td")
+            if (!chain.reason) {
+                cell.append("button")
+                    .text("Choose")
+                    .on("click", () => {
+                        selectedChain = {up: chain.up.recipe.key, down: chain.down.recipe.key}
+                        selected = null
+                        output = null
+                        renderBlueprint()
+                    })
+            }
+        }
+    }
+
+    if (selectedChain !== null) {
+        let chain = chains.find(isSelectedChain)
+        if (chain && !chain.reason) {
+            let panel = root.append("div")
+                .classed("blueprint-panel", true)
+            panel.append("h3")
+                .text(`Blueprint for ${chain.up.recipe.name} → ${chain.down.recipe.name}`)
+            panel.append("div")
+                .classed("hint", true)
+                .text("Chains are built from the cheapest parts which carry the load.")
+            panel.append("button")
+                .property("disabled", busy)
+                .text("Generate")
+                .on("click", () => generateChain(chain))
+            renderResult(panel)
+            return
         }
     }
 
