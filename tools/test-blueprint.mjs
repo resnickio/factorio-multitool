@@ -7,6 +7,7 @@ import { defaultParams, buildColumnBlueprint, parseReply, ineligibleReason } fro
 import { placeColumns } from "../blueprint/columns.js"
 import { validateParams, validateLayout } from "../blueprint/validate.js"
 import { previewLayout } from "../blueprint/build.js"
+import { previewModel } from "../blueprint/preview.js"
 import { askForLayout } from "../blueprint/llm.js"
 import { EAST } from "../blueprint/entities.js"
 import { stageRequirements, chainIneligibleReason, validateChain, defaultChainParams, buildChainBlueprint } from "../blueprint/chain.js"
@@ -478,6 +479,66 @@ await test("the chain blueprint round-trips", () => {
     let {result} = chain()
     let back = decodeBlueprint(encodeBlueprint(result.blueprint, deflate), inflate).blueprint
     assert.equal(back.entities.length, result.entities.length)
+})
+
+await test("the preview model has a shape for each entity, and fits them", () => {
+    let r = build(iron)
+    let m = previewModel(r.entities, data, {wires: r.blueprint.wires, connections: r.connections})
+    assert.equal(m.shapes.length, r.entities.length)
+    let kinds = {}
+    for (let s of m.shapes) {
+        kinds[s.kind] = (kinds[s.kind] || 0) + 1
+    }
+    assert.equal(kinds.machine, 24)
+    assert.equal(kinds.belt, 24 * 3 * 2)
+    assert.equal(kinds.inserter, 48)
+    assert.ok(kinds.pole > 0)
+    assert.equal(m.wires.length, kinds.pole - 1)
+    for (let s of m.shapes) {
+        assert.ok(s.x >= m.bounds.x && s.y >= m.bounds.y && s.x + s.w <= m.bounds.x + m.bounds.w && s.y + s.h <= m.bounds.y + m.bounds.h, `${s.name} outside the bounds`)
+    }
+})
+
+await test("inserters in the preview point the way items move, belts the way they flow", () => {
+    let r = build(iron)
+    let m = previewModel(r.entities, data)
+    // The input inserters on the left of the machines move items east.
+    let leftOfMachines = m.shapes.filter(s => s.kind === "inserter" && s.x === 1)
+    assert.ok(leftOfMachines.length > 0 && leftOfMachines.every(s => s.direction === 4))
+    assert.ok(m.shapes.filter(s => s.kind === "belt").every(s => s.direction === 8))
+    // Belt tiers are coloured as in the game.
+    let fast = previewModel(build({recipe: "iron-plate", rate: 25}).entities, data).shapes.filter(s => s.kind === "belt").map(s => s.tier)
+    assert.ok(fast.includes("blue") || fast.includes("green") || fast.includes("red"))
+})
+
+await test("the preview labels the supply, output and fluids, and leaves room for them", () => {
+    let r = build(sulfur, CP, {columns: 1})
+    let m = previewModel(r.entities, data, {connections: r.connections})
+    let types = m.labels.map(l => l.type).sort()
+    assert.deepEqual(types, ["fluid", "fluid", "output"])
+    // The two fluid labels sit on different rows so they do not overlap.
+    let fluids = m.labels.filter(l => l.type === "fluid")
+    assert.notEqual(fluids[0].row, fluids[1].row)
+    for (let l of m.labels) {
+        assert.ok(l.x >= m.bounds.x && l.x <= m.bounds.x + m.bounds.w, `${l.text} outside horizontally`)
+        assert.ok(l.y >= m.bounds.y - 1 && l.y <= m.bounds.y + m.bounds.h, `${l.text} outside vertically`)
+    }
+    let c = chain()
+    let cm = previewModel(c.result.entities, data, {connections: c.result.connections})
+    assert.deepEqual(cm.labels.map(l => l.type).sort(), ["input", "input", "output"])
+    assert.ok(cm.labels.filter(l => l.type === "input").every(l => l.side === "right"))
+})
+
+await test("pipes in the preview link to the pipes and tunnel ends they touch", () => {
+    let r = build(plastic, CP)
+    let m = previewModel(r.entities, data)
+    let pipes = m.shapes.filter(s => s.kind === "pipe")
+    // The collector is a vertical run; its middle pieces link up and down.
+    let middle = pipes.filter(s => s.links.includes(0) && s.links.includes(8))
+    assert.ok(middle.length > 0)
+    // Pieces beside a tunnel end also link sideways.
+    assert.ok(pipes.some(s => s.links.includes(4)))
+    assert.equal(m.shapes.filter(s => s.kind === "underground").length, build(plastic, CP).entities.filter(e => e.name === "pipe-to-ground").length)
 })
 
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)

@@ -574,3 +574,29 @@ tr.locked-recipe td.item-icon {
     white-space: pre-wrap;
     font-size: 0.8em;
 }
+
+/* graphical blueprint preview */
+.blueprint-graphic {
+    margin: 0.5em 0;
+}
+.blueprint-graphic-controls {
+    margin-bottom: 0.3em;
+}
+.blueprint-graphic-controls button {
+    min-width: 2em;
+    margin-right: 0.3em;
+}
+.blueprint-graphic-controls label {
+    margin-left: 0.8em;
+}
+.blueprint-graphic-scroll {
+    max-height: 38em;
+    overflow: auto;
+    border: 1px solid var(--light);
+}
+.blueprint-svg {
+    display: block;
+}
+.blueprint-text-preview {
+    margin: 0.5em 0;
+}
