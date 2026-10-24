@@ -279,7 +279,8 @@ function lineRequirements(reqs) {
     for (let root of reqs) {
         let branches = []
         for (let ing of root.recipe.ingredients) {
-            // Follow single-ingredient producers inward, up to two stages.
+            // Follow producers inward, up to two stages. A stage which is not
+            // the outermost can take one more ingredient from outside.
             let stages = []
             let item = ing.item
             while (stages.length < MAX_STAGES) {
@@ -288,22 +289,38 @@ function lineRequirements(reqs) {
                     break
                 }
                 stages.push(producer)
-                // The next stage out is only possible if this one has one ingredient.
-                if (producer.recipe.ingredients.length !== 1) {
+                // The deepest chain is the one worth following.
+                let depth = (it, seen) => {
+                    let p = producerOf(it).find(q => q !== root && !seen.includes(q))
+                    return p ? 1 + Math.max(0, ...p.recipe.ingredients.map(i => depth(i.item, [...seen, p]))) : 0
+                }
+                let next = null
+                if (producer.recipe.ingredients.length <= 2) {
+                    let best = 0
+                    for (let i of producer.recipe.ingredients) {
+                        let d = depth(i.item, [...stages, producer])
+                        if (d > best) {
+                            best = d
+                            next = i
+                        }
+                    }
+                }
+                if (!next) {
                     break
                 }
-                item = producer.recipe.ingredients[0].item
+                item = next.item
             }
             if (stages.length > 0) {
                 branches.push(stages)
             }
         }
-        // A producer with several ingredients can only be the outermost stage.
-        branches = branches.map(stages => {
-            let cut = stages.findIndex((s, j) => j < stages.length - 1 && s.recipe.ingredients.length !== 1)
-            return cut === -1 ? stages : stages.slice(0, cut + 1)
-        })
-        branches = branches.slice(0, 2)
+        // Only two branches fit; the longer ones are worth more.
+        branches = branches
+            .map((stages, i) => ({stages, i}))
+            .sort((x, y) => y.stages.length - x.stages.length || x.i - y.i)
+            .slice(0, 2)
+            .sort((x, y) => x.i - y.i)
+            .map(x => x.stages)
         let total = branches.reduce((n, b) => n + b.length, 0)
         if (branches.length === 0 || total < 2) {
             continue

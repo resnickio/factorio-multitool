@@ -644,15 +644,17 @@ await test("a line's stages are sized back from the final recipe", () => {
     // 3 circuits a second need 9 cables and 3 iron plates; 9 cables need 4.5 copper plates.
     assert.deepEqual(r.stages.east.map(s => [s.recipe, s.rate]), [["copper-cable", 9], ["copper-plate", 4.5]])
     assert.deepEqual(r.stages.west.map(s => [s.recipe, s.rate]), [["iron-plate", 3]])
-    assert.deepEqual(r.external, {east: null, west: null})
+    assert.deepEqual(r.external, [])
 })
 
 await test("an ingredient with no branch arrives on a feeder", () => {
     let r = resolveLine({...orePlan, west: []}, data)
-    assert.equal(r.external.west.item, "iron-plate")
-    assert.equal(r.external.west.rate, 3)
+    assert.equal(r.external[0].item, "iron-plate")
+    assert.equal(r.external[0].from, "east")
+    assert.equal(r.external[0].rate, 3)
     let other = resolveLine({...orePlan, east: [], west: [orePlan.east[0]]}, data)
-    assert.equal(other.external.east.item, "iron-plate")
+    assert.equal(other.external[0].item, "iron-plate")
+    assert.equal(other.external[0].from, "west")
 })
 
 await test("a line from ore to circuits is accepted", () => {
@@ -744,6 +746,37 @@ await test("a line's blueprint wires its poles and round-trips", () => {
     assert.equal(result.blueprint.wires.length, poles - 1)
     let back = decodeBlueprint(encodeBlueprint(result.blueprint, deflate), inflate).blueprint
     assert.equal(back.entities.length, result.entities.length)
+})
+
+const inserterPlan = {
+    root: {recipe: "inserter", machine: ASM2, rate: 2},
+    east: [{recipe: "electronic-circuit", machine: ASM2}, {recipe: "copper-cable", machine: ASM2}],
+    west: [{recipe: "iron-gear-wheel", machine: ASM2}],
+}
+
+await test("a three-ingredient final recipe has a second shared belt", () => {
+    let r = resolveLine(inserterPlan, data)
+    assert.equal(r.m, 2)
+    assert.deepEqual(r.external.map(e => [e.item, e.from]), [["iron-plate", "west"]])
+    // Circuits need an iron plate beside the cable.
+    assert.deepEqual(r.stages.east.map(s => [s.recipe, s.other && s.other.item]), [["electronic-circuit", "iron-plate"], ["copper-cable", null]])
+    assert.deepEqual(r.rootBelts, {near: ["iron-gear-wheel", "iron-plate"], far: ["electronic-circuit"]})
+})
+
+await test("inserters from plates are laid out, with long-handed inserters over the first belt", () => {
+    let {params, result} = line(inserterPlan)
+    assert.deepEqual(result.errors, [])
+    assert.ok(result.ok)
+    assert.ok(params.mid2)
+    assert.ok(result.entities.some(e => e.name === "long-handed-inserter"))
+    assert.deepEqual(validateLayout(result.entities, data).errors, [])
+    // Plates reach the circuit stage and the final recipe on feeders.
+    assert.deepEqual(result.connections.inputs.map(i => i.items.join()).sort(), ["copper-plate", "iron-plate", "iron-plate", "iron-plate"])
+})
+
+await test("a three-ingredient final recipe needs a wide enough machine", () => {
+    let spec = {root: {recipe: "inserter", machine: "assembling-machine-2", rate: 2}, east: [{recipe: "electronic-circuit", machine: ASM2}], west: []}
+    assert.equal(lineIneligibleReason(spec, data), null)
 })
 
 console.log(failures === 0 ? "\nall passed" : `\n${failures} failed`)
