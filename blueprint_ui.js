@@ -2,7 +2,7 @@ import { spec } from "./factory.js"
 import { encodeBlueprint } from "./blueprint/codec.js"
 import { defaultParams, buildColumnBlueprint, ineligibleReason } from "./blueprint/dsl.js"
 import { previewLayout } from "./blueprint/build.js"
-import { askForLayout, OLLAMA_URL } from "./blueprint/llm.js"
+import { askForLayout, askForChainLayout, listOllamaModels, OLLAMA_URL } from "./blueprint/llm.js"
 import { entityInfo, lookupRecipe, machineCrafts } from "./blueprint/entities.js"
 import { chainIneligibleReason, defaultChainParams, buildChainBlueprint } from "./blueprint/chain.js"
 import { renderPreview } from "./blueprint_preview.js"
@@ -89,8 +89,19 @@ async function generateChain(chain) {
     let requirement = {recipe: chain.down.recipe.key, rate: chain.down.rate, upstream: chain.up.recipe.key}
     let machines = {upstream: chain.up.building.key, downstream: chain.down.building.key}
     try {
-        let params = defaultChainParams(requirement, machines, spec.data)
-        output = {...buildChainBlueprint(params, requirement, spec.data), chain: params}
+        if (provider === "anthropic") {
+            if (apiKey === "") {
+                throw new Error("Enter an API key, or choose another way to build.")
+            }
+            let asked = await askForChainLayout({provider, apiKey, model: models.anthropic, requirement, machines, data: spec.data})
+            output = {...asked, chain: asked.params}
+        } else if (provider === "ollama") {
+            let asked = await askForChainLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, requirement, machines, data: spec.data})
+            output = {...asked, chain: asked.params}
+        } else {
+            let params = defaultChainParams(requirement, machines, spec.data)
+            output = {...buildChainBlueprint(params, requirement, spec.data), chain: params, attempts: 0, log: []}
+        }
     } catch (e) {
         output = {failed: e.message}
     }
@@ -256,8 +267,14 @@ function renderChainResult(box) {
     let part = (stage, name) => `${stage.machines} × ${stage.machine} (${name})`
     let up = lookupRecipe(spec.data, p.upstreamRecipe)
     let down = lookupRecipe(spec.data, p.downstreamRecipe)
+    let attempts = output.ok && output.attempts > 0 ? ` (accepted after ${output.attempts} ${output.attempts === 1 ? "attempt" : "attempts"})` : ""
     box.append("div")
-        .text(`${part(p.upstream, up.localized_name.en)} feeding ${part(p.downstream, down.localized_name.en)} along a ${p.mid}.`)
+        .text(`${part(p.upstream, up.localized_name.en)} feeding ${part(p.downstream, down.localized_name.en)} along a ${p.mid}${attempts}.`)
+    if (p.notes) {
+        box.append("div")
+            .classed("hint", true)
+            .text(p.notes)
+    }
     if (!output.ok) {
         box.append("div")
             .classed("blueprint-error", true)
@@ -267,6 +284,7 @@ function renderChainResult(box) {
             list.append("li")
                 .text(e)
         }
+        renderLog(box)
         return
     }
     if (output.warnings.length > 0) {
@@ -299,6 +317,7 @@ function renderChainResult(box) {
     box.append("span")
         .classed("hint", true)
         .text(" In the game, click the import-string button in the blueprint library and paste it.")
+    renderLog(box)
 }
 
 function renderLog(box) {
@@ -312,6 +331,139 @@ function renderLog(box) {
         details.append("pre")
             .classed("blueprint-log", true)
             .text(`Attempt ${entry.attempt}:\n${entry.reply}` + (entry.errors && entry.errors.length > 0 ? `\nRejected: ${entry.errors.join("; ")}` : ""))
+    }
+}
+
+// The models installed on the Ollama server, as last asked. Fetched when the
+// local model is chosen, and again when the address changes or Refresh is used.
+let installed = {models: null, error: null, loading: false, for: null}
+
+async function refreshInstalled() {
+    installed = {models: null, error: null, loading: true, for: ollamaUrl}
+    renderBlueprint()
+    let asked = ollamaUrl
+    try {
+        let names = await listOllamaModels(asked)
+        if (asked !== ollamaUrl) {
+            return
+        }
+        installed = {models: names, error: null, loading: false, for: asked}
+        // The default may not be installed; pick something that is.
+        if (names.length > 0 && !names.includes(models.ollama)) {
+            models.ollama = names[0]
+        }
+    } catch (e) {
+        if (asked !== ollamaUrl) {
+            return
+        }
+        installed = {models: null, error: e.message, loading: false, for: asked}
+    }
+    renderBlueprint()
+}
+
+// Choosing how the parts are picked: without a model, with a local model, or
+// with Claude; and the settings for the model chosen.
+function renderProviderControls(panel) {
+    let modes = panel.append("div")
+    let choices = [
+        ["none", "Build without a model (cheapest parts that carry the load)"],
+        ["ollama", "Ask a local model (Ollama) to choose the parts"],
+        ["anthropic", "Ask Claude to choose the parts (needs an API key)"],
+    ]
+    for (let [value, text] of choices) {
+        let label = modes.append("label")
+            .style("display", "block")
+        label.append("input")
+            .attr("type", "radio")
+            .attr("name", "blueprint_mode")
+            .property("checked", provider === value)
+            .on("change", () => {
+                provider = value
+                if (value === "ollama" && installed.for !== ollamaUrl) {
+                    refreshInstalled()
+                } else {
+                    renderBlueprint()
+                }
+            })
+        label.append("span")
+            .text(" " + text)
+    }
+    if (provider === "none") {
+        return
+    }
+    let box = panel.append("div")
+        .classed("blueprint-api", true)
+    if (provider === "anthropic") {
+        box.append("div")
+            .classed("hint", true)
+            .text("Your key stays in this page. The request goes directly from your browser to api.anthropic.com and contains the factory's numbers; nothing is saved.")
+        box.append("input")
+            .attr("type", "password")
+            .attr("placeholder", "Anthropic API key")
+            .attr("autocomplete", "off")
+            .property("value", apiKey)
+            .on("input", function() {
+                apiKey = this.value
+            })
+        box.append("input")
+            .attr("type", "text")
+            .attr("placeholder", "Model")
+            .property("value", models.anthropic)
+            .on("input", function() {
+                models.anthropic = this.value
+            })
+        return
+    }
+
+    box.append("div")
+        .classed("hint", true)
+        .text("The request goes to your own Ollama server and contains the factory's numbers; nothing leaves your machine. If the browser is blocked from reaching it, start Ollama with OLLAMA_ORIGINS set to include this page's address.")
+    let address = box.append("div")
+    address.append("input")
+        .attr("type", "text")
+        .attr("placeholder", "Ollama address")
+        .property("value", ollamaUrl)
+        .on("input", function() {
+            ollamaUrl = this.value
+        })
+        // Ask again once the address is settled, not on every keystroke.
+        .on("change", () => refreshInstalled())
+    address.append("button")
+        .text("Refresh models")
+        .on("click", () => refreshInstalled())
+    if (installed.loading) {
+        box.append("div")
+            .classed("hint", true)
+            .text("Asking Ollama which models are installed...")
+    } else if (installed.models !== null && installed.models.length > 0) {
+        let select = box.append("select")
+            .classed("model-select", true)
+            .on("change", function() {
+                models.ollama = this.value
+            })
+        for (let name of installed.models) {
+            select.append("option")
+                .attr("value", name)
+                .property("selected", name === models.ollama)
+                .text(name)
+        }
+    } else {
+        // No list to choose from, so the name is typed.
+        let reason = installed.models !== null
+            ? "Ollama has no models installed."
+            : installed.error ? `Could not list the models (${installed.error}).` : ""
+        if (reason) {
+            box.append("div")
+                .classed("hint", true)
+                .text(reason + " Type a model name instead.")
+        }
+        box.append("input")
+            .attr("type", "text")
+            .attr("placeholder", "Model")
+            .property("value", models.ollama)
+            .on("input", function() {
+                models.ollama = this.value
+            })
     }
 }
 
@@ -403,9 +555,7 @@ export function renderBlueprint() {
                 .classed("blueprint-panel", true)
             panel.append("h3")
                 .text(`Blueprint for ${chain.up.recipe.name} → ${chain.down.recipe.name}`)
-            panel.append("div")
-                .classed("hint", true)
-                .text("Chains are built from the cheapest parts which carry the load.")
+            renderProviderControls(panel)
             panel.append("button")
                 .property("disabled", busy)
                 .text("Generate")
@@ -423,61 +573,7 @@ export function renderBlueprint() {
         .classed("blueprint-panel", true)
     panel.append("h3")
         .text(`Blueprint for ${req.recipe.name}`)
-    let modes = panel.append("div")
-    let choices = [
-        ["none", "Build without a model (cheapest parts that carry the load)"],
-        ["ollama", "Ask a local model (Ollama) to choose the parts"],
-        ["anthropic", "Ask Claude to choose the parts (needs an API key)"],
-    ]
-    for (let [value, text] of choices) {
-        let label = modes.append("label")
-            .style("display", "block")
-        label.append("input")
-            .attr("type", "radio")
-            .attr("name", "blueprint_mode")
-            .property("checked", provider === value)
-            .on("change", () => {
-                provider = value
-                renderBlueprint()
-            })
-        label.append("span")
-            .text(" " + text)
-    }
-    if (provider !== "none") {
-        let box = panel.append("div")
-            .classed("blueprint-api", true)
-        if (provider === "anthropic") {
-            box.append("div")
-                .classed("hint", true)
-                .text("Your key stays in this page. The request goes directly from your browser to api.anthropic.com and contains the factory's numbers; nothing is saved.")
-            box.append("input")
-                .attr("type", "password")
-                .attr("placeholder", "Anthropic API key")
-                .attr("autocomplete", "off")
-                .property("value", apiKey)
-                .on("input", function() {
-                    apiKey = this.value
-                })
-        } else {
-            box.append("div")
-                .classed("hint", true)
-                .text("The request goes to your own Ollama server and contains the factory's numbers; nothing leaves your machine. If the browser is blocked from reaching it, start Ollama with OLLAMA_ORIGINS set to include this page's address.")
-            box.append("input")
-                .attr("type", "text")
-                .attr("placeholder", "Ollama address")
-                .property("value", ollamaUrl)
-                .on("input", function() {
-                    ollamaUrl = this.value
-                })
-        }
-        box.append("input")
-            .attr("type", "text")
-            .attr("placeholder", "Model")
-            .property("value", models[provider])
-            .on("input", function() {
-                models[provider] = this.value
-            })
-    }
+    renderProviderControls(panel)
     panel.append("button")
         .property("disabled", busy)
         .text("Generate")
