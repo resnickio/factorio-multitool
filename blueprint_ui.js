@@ -2,7 +2,7 @@ import { spec } from "./factory.js"
 import { encodeBlueprint } from "./blueprint/codec.js"
 import { defaultParams, buildColumnBlueprint, ineligibleReason } from "./blueprint/dsl.js"
 import { previewLayout } from "./blueprint/build.js"
-import { askForLayout, askForChainLayout, listOllamaModels, OLLAMA_URL } from "./blueprint/llm.js"
+import { askForLayout, askForChainLayout, askForLineLayout, listOllamaModels, OLLAMA_URL } from "./blueprint/llm.js"
 import { entityInfo, lookupRecipe, machineCrafts } from "./blueprint/entities.js"
 import { chainIneligibleReason, defaultChainParams, buildChainBlueprint } from "./blueprint/chain.js"
 import { renderPreview } from "./blueprint_preview.js"
@@ -348,8 +348,19 @@ async function generateLine(line) {
     output = {pending: true}
     renderBlueprint()
     try {
-        let params = defaultLineParams(line.spec, spec.data)
-        output = {...buildLineBlueprint(params, line.spec, spec.data), line: {spec: line.spec, params}}
+        if (provider === "anthropic") {
+            if (apiKey === "") {
+                throw new Error("Enter an API key, or choose another way to build.")
+            }
+            let asked = await askForLineLayout({provider, apiKey, model: models.anthropic, spec: line.spec, data: spec.data})
+            output = {...asked, line: {spec: line.spec, params: asked.params}}
+        } else if (provider === "ollama") {
+            let asked = await askForLineLayout({provider, baseUrl: ollamaUrl, model: models.ollama, maxAttempts: 6, spec: line.spec, data: spec.data})
+            output = {...asked, line: {spec: line.spec, params: asked.params}}
+        } else {
+            let params = defaultLineParams(line.spec, spec.data)
+            output = {...buildLineBlueprint(params, line.spec, spec.data), line: {spec: line.spec, params}, attempts: 0, log: []}
+        }
     } catch (e) {
         output = {failed: e.message}
     }
@@ -364,6 +375,18 @@ async function generateLine(line) {
 function renderLineResult(box) {
     let {spec: lineSpec, params} = output.line
     let name = key => lookupRecipe(spec.data, key).localized_name.en
+    if (!params) {
+        box.append("div")
+            .classed("blueprint-error", true)
+            .text("The model's reply could not be used, so no blueprint was made:")
+        let list = box.append("ul")
+        for (let e of output.errors) {
+            list.append("li")
+                .text(e)
+        }
+        renderLog(box)
+        return
+    }
     let parts = []
     for (let side of ["west", "east"]) {
         for (let stage of [...params[side].stages].reverse()) {
@@ -371,8 +394,14 @@ function renderLineResult(box) {
         }
     }
     parts.push(`${params.root.machines} × ${params.root.machine} (${name(lineSpec.root.recipe)})`)
+    let attempts = output.ok && output.attempts > 0 ? ` (accepted after ${output.attempts} ${output.attempts === 1 ? "attempt" : "attempts"})` : ""
     box.append("div")
-        .text(`${parts.join("; ")}; shared belt ${params.mid}.`)
+        .text(`${parts.join("; ")}; shared belt ${params.mid}${attempts}.`)
+    if (params.notes) {
+        box.append("div")
+            .classed("hint", true)
+            .text(params.notes)
+    }
     if (!output.ok) {
         box.append("div")
             .classed("blueprint-error", true)
@@ -382,6 +411,7 @@ function renderLineResult(box) {
             list.append("li")
                 .text(e)
         }
+        renderLog(box)
         return
     }
     if (output.warnings.length > 0) {
@@ -413,6 +443,7 @@ function renderLineResult(box) {
     box.append("span")
         .classed("hint", true)
         .text(" In the game, click the import-string button in the blueprint library and paste it.")
+    renderLog(box)
 }
 
 function renderChainResult(box) {
@@ -748,9 +779,7 @@ export function renderBlueprint() {
                 .classed("blueprint-panel", true)
             panel.append("h3")
                 .text(`Blueprint for ${line.root.recipe.name} and what feeds it`)
-            panel.append("div")
-                .classed("hint", true)
-                .text("Lines are built from the cheapest parts which carry the load.")
+            renderProviderControls(panel)
             panel.append("button")
                 .property("disabled", busy)
                 .text("Generate")

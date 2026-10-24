@@ -50,7 +50,7 @@ const MAX_ROOT_SOLIDS = 4
 const SIDES = ["east", "west"]
 const LONG_INSERTER = ALLOWED_LONG_INSERTERS[0]
 
-function availableBelts(data) {
+export function availableBelts(data) {
     return BELTS.filter(b => data.blueprint_entities[b])
 }
 
