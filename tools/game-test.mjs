@@ -70,6 +70,16 @@ if (sample.line) {
     } else {
         params = defaultLineParams(spec, data)
         result = buildLineBlueprint(params, spec, data)
+        if (args["force-root"]) {
+            // Builds with fewer final machines than the validator accepts, to see
+            // what the game really does (the validator's estimates are conservative).
+            const { placeLine } = await import("../blueprint/line.js")
+            const { makeBlueprint } = await import("../blueprint/build.js")
+            params.root.machines = parseInt(args["force-root"], 10)
+            let placed = placeLine(params, spec, data)
+            result = {ok: true, entities: placed.entities, connections: placed.connections, blueprint: makeBlueprint(placed.entities, "forced", [spec.root.machine], data)}
+            console.log(`forced ${params.root.machines} final machines, bypassing the validator`)
+        }
     }
     if (!result.ok) {
         console.log("line rejected:\n" + result.errors.join("\n"))
