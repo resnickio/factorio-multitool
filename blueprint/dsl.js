@@ -2,7 +2,7 @@
 // which picks one without it, and the pipeline that checks and places it.
 
 import { placeColumns } from "./columns.js"
-import { validateParams, validateLayout, ineligibleReason } from "./validate.js"
+import { validateParams, validateLayout, exactCountWarning, ineligibleReason } from "./validate.js"
 import { makeBlueprint } from "./build.js"
 import {
     entityInfo, beltThroughput, inserterThroughput, machineCrafts, lookupRecipe,
@@ -19,7 +19,7 @@ function availableBelts(data) {
 
 // What the model is told. The calculator supplies the numbers; the model picks
 // the parameters from fixed lists.
-export function describeTask(requirement, machine, data) {
+export function describeTask(requirement, machine, data, options = {}) {
     let recipe = lookupRecipe(data, requirement.recipe)
     let info = entityInfo(data, machine)
     let crafts = machineCrafts(info, recipe)
@@ -28,6 +28,7 @@ export function describeTask(requirement, machine, data) {
     let ports = fluids.length === 0 ? [] : fluidInputPorts(info, WEST).slice(0, fluids.length)
     return {
         task: "machine_column",
+        exact_counts: Boolean(options.exact),
         recipe: requirement.recipe,
         ingredients: recipe.ingredients.map(i => ({
             item: i.name,
@@ -63,7 +64,7 @@ Fluid ingredients (marked "fluid": true) arrive by pipe: they use no belt lane a
 - "input_inserter_count", "output_inserter_count": 1 or 2 inserters per machine on each side (the input count at most max_input_inserters_per_machine). All of a machine's ingredients arrive through its input inserters together, so they must move the sum of the ingredient rates (scaled by how busy the machine is); the output inserters must move the output rate. Prefer fewer and cheaper inserters that are sufficient.
 - "pole": a pole name from options.poles.
 - "notes": one short sentence on your choices.
-Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why.`
+Choose only from the listed options. A layout that cannot carry its load will be rejected, and you will be told why. If "exact_counts" is true, the aim is the fewest machines: use exactly fewest_machines, and pick the fastest inserters you can (two per side where they fit), because the column may then run a little under its rate and that is accepted.`
 
 // Extracts the JSON object from a model reply.
 export function parseReply(text) {
@@ -85,6 +86,14 @@ export function parseReply(text) {
         pole: reply.pole,
         notes: reply.notes,
     }
+}
+
+// The fewest machines a recipe needs at full speed, which is what the
+// calculator counts.
+export function fewestMachines(requirement, machine, data) {
+    let recipe = lookupRecipe(data, requirement.recipe)
+    let outPer = recipe.results[0].amount * machineCrafts(entityInfo(data, machine), recipe)
+    return Math.ceil(requirement.rate / outPer - 1e-9)
 }
 
 // Picks parameters without a model: the fewest machines which a cheap set of
@@ -193,6 +202,13 @@ export function buildColumnBlueprint(params, requirement, data) {
         return {ok: false, errors: layout.errors, warnings: checked.warnings, stats: checked.stats, entities: placed.entities}
     }
     let recipe = lookupRecipe(data, requirement.recipe)
+    if (params.exact) {
+        let fraction = checked.stats.speedFraction === undefined ? 1 : checked.stats.speedFraction
+        checked.stats.estimatedRate = requirement.rate * fraction
+        if (fraction < 1 - 1e-9) {
+            checked.warnings.unshift(exactCountWarning(recipe.localized_name.en, fraction, requirement.rate))
+        }
+    }
     let label = `${params.machines}x ${params.machine}: ${recipe.localized_name.en}`
     let blueprint = makeBlueprint(placed.entities, label, [params.machine, recipe.results[0].name], data)
     return {ok: true, errors: [], warnings: checked.warnings, stats: checked.stats, entities: placed.entities, connections: placed.connections, blueprint}

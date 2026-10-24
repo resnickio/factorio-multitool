@@ -51,6 +51,12 @@ export function ineligibleReason(data, recipeKey, machineName, maxSolids = 2) {
     return null
 }
 
+// What to tell the user when exact machine counts leave a part running below
+// full speed: the line or chain then makes less than was asked for.
+export function exactCountWarning(part, fraction, rate) {
+    return `Exact machine counts: the inserters at ${part} keep its machines at about ${Math.round(fraction * 100)}% of full speed, so it makes about ${(rate * fraction).toFixed(2)}/s of the ${rate.toFixed(2)}/s asked for (an estimate from conservative inserter speeds, so likely a little more).`
+}
+
 // Checks the parameters of a layout request against the requirements, before
 // anything is placed.
 //
