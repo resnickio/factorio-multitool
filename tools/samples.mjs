@@ -41,4 +41,42 @@ SAMPLES["circuits-from-iron-furnaces"] = {
     },
 }
 
+// Lines: a final recipe with branches of producers on either side of a shared belt.
+SAMPLES["circuits-from-copper-ore"] = {
+    rate: 3,
+    line: {
+        root: {recipe: "electronic-circuit", machine: "assembling-machine-2"},
+        east: [
+            {recipe: "copper-cable", machine: "assembling-machine-2"},
+            {recipe: "copper-plate", machine: "electric-furnace"},
+        ],
+        west: [],
+    },
+}
+SAMPLES["circuits-from-ore"] = {
+    rate: 3,
+    line: {
+        root: {recipe: "electronic-circuit", machine: "assembling-machine-2"},
+        east: [
+            {recipe: "copper-cable", machine: "assembling-machine-2"},
+            {recipe: "copper-plate", machine: "electric-furnace"},
+        ],
+        west: [{recipe: "iron-plate", machine: "electric-furnace"}],
+    },
+}
+
+// The mirror image: the producers on the west, so the other ingredient comes
+// in from the west.
+SAMPLES["circuits-west-branch"] = {
+    rate: 3,
+    line: {
+        root: {recipe: "electronic-circuit", machine: "assembling-machine-2"},
+        east: [],
+        west: [
+            {recipe: "copper-cable", machine: "assembling-machine-2"},
+            {recipe: "copper-plate", machine: "electric-furnace"},
+        ],
+    },
+}
+
 export const DEFAULT_MACHINE = "electric-furnace"
